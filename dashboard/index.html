@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ledgerdb cluster status</title>
+<style>
+  body { font-family: -apple-system, sans-serif; margin: 2rem; background: #0b0f14; color: #e6edf3; }
+  h1 { font-size: 1.1rem; font-weight: 600; }
+  table { border-collapse: collapse; margin-top: 1rem; }
+  th, td { padding: 0.4rem 0.9rem; text-align: left; border-bottom: 1px solid #23303c; }
+  th { color: #8b949e; font-weight: 500; font-size: 0.85rem; }
+  .leader { color: #3fb950; font-weight: 600; }
+  .follower { color: #8b949e; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+  .dot.leader { background:#3fb950; }
+  .dot.follower { background:#484f58; }
+</style>
+</head>
+<body>
+<h1>ledgerdb — cluster status</h1>
+<table id="nodes">
+  <thead><tr><th>Node</th><th>Term</th><th>Role</th></tr></thead>
+  <tbody></tbody>
+</table>
+<script>
+async function poll() {
+  try {
+    const res = await fetch('/status');
+    const data = await res.json();
+    const tbody = document.querySelector('#nodes tbody');
+    tbody.innerHTML = '';
+    for (const n of (data.nodes || [])) {
+      const tr = document.createElement('tr');
+      const role = n.is_leader ? 'leader' : 'follower';
+      tr.innerHTML = `<td>node-${n.index}</td><td>${n.term}</td>` +
+        `<td class="${role}"><span class="dot ${role}"></span>${role}</td>`;
+      tbody.appendChild(tr);
+    }
+  } catch (e) {
+    console.error('status poll failed', e);
+  }
+  setTimeout(poll, 2000);
+}
+poll();
+</script>
+</body>
+</html>

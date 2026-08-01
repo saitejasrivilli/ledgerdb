@@ -42,6 +42,7 @@ go run ./cmd/benchmark              # throughput, latency, chaos recovery (simul
 go run ./cmd/compression_benchmark  # batching + compression ratio
 go run ./cmd/mvcc_benchmark         # MVCC vs. lock-based concurrent reads
 go run ./cmd/transport_benchmark    # chaos recovery over a real TCP transport
+go run ./cmd/dashboard_demo          # cluster status dashboard at localhost:8080
 ```
 
 Two test suites need infrastructure this repo can't assume you have
@@ -109,6 +110,7 @@ on top, each with its own design doc.
 | v0.14.4 | Real `iptables`/`tc netem` fault injection | [docs/design_network_fault.md](docs/design_network_fault.md) |
 | v0.15 | MongoDB wire protocol translation | [docs/design_wire_protocol.md](docs/design_wire_protocol.md) |
 | v0.16 | REST API | [docs/design_rest_api.md](docs/design_rest_api.md) |
+| v0.17 | Metrics dashboard UI | [docs/design_dashboard_ui.md](docs/design_dashboard_ui.md) |
 
 See [CHANGELOG.md](CHANGELOG.md) for what shipped, what tests cover it,
 and what bugs were caught and fixed along the way, per version.

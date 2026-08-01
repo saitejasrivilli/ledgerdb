@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.17 — Metrics dashboard UI
+
+**Adds:** `dashboard/` — a `/status` JSON endpoint (per-node term/leader
+state, read live on every request) plus a static, embedded HTML/JS page
+(vanilla JS, polling `/status` every 2s, no build tooling). Explicitly
+the lowest-value of the three v0.15–v0.17 additions for interview
+purposes: a demo artifact, not new correctness surface, and design doc
+states that plainly rather than dressing it up.
+
+**Design doc:** `docs/design_dashboard_ui.md`
+
+**Tests:** `tests/regression/v0_17_dashboard_test.go` —
+`TestDashboard_StatusEndpointServesRealClusterState` confirms `/status`
+JSON matches `GetState()` called directly on each of 3 real cluster
+nodes, and exactly one is reported as leader.
+
+**Manually verified, not just unit-tested:** `cmd/dashboard_demo` starts
+a real cluster and serves the page at `:8080` — `curl /status` and
+`curl /` both checked directly against the running server (see design
+doc), since no headless-browser test exists to cover the static page
+itself.
+
+**Breaking check:** full regression suite re-ran, still green — `go test
+./... -race -count=3` clean.
+
+**Not yet implemented:** no headless-browser/UI automated test, no auth,
+no historical charting (Grafana from v0.11 already covers that).
+
 ## v0.16 — REST API
 
 **Adds:** `api/` — a thin `net/http` layer over `docstore` (v1.0):
