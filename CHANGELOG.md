@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.8 — Batching + compression
+
+**Adds:** `batch.Batcher` — flushes on count or linger time, whichever
+fires first, gzip-compressing the whole batch into one Raft entry.
+`replication.ReplicatedPartition`'s apply loop transparently unpacks
+batch-encoded blobs back into individual messages at individual storage
+offsets (magic-marker detection, so v0.4-v0.7's unbatched writes are
+unaffected — verified by test, not just by argument).
+
+**Design doc:** `docs/design_batching_compression.md`
+
+**Tests:** `tests/regression/v0_8_batching_compression_test.go`
+- `TestV08_CompressedDataRoundTrips` — batch of varied-length (incl.
+  empty) messages round-trips byte-exact through Encode/TryDecode
+- `TestV08_NonBatchPayloadDecodesAsRaw` — a plain, non-batch payload is
+  correctly identified as not-a-batch (`ok=false`), not misparsed
+- `TestV08_BatchFlushTriggersOnCount` / `..OnLinger` — both flush
+  triggers fire independently and exactly once
+- `TestV08_BatchedWriteAppliesAsIndividualMessages` — full path through
+  a real replicated cluster: batch commits as one Raft entry, unpacks to
+  3 sequential storage offsets, next unbatched write lands correctly
+  right after
+
+**Benchmark:** `benchmarks/results/v0.8_compression.json` — 1000
+realistic log-line messages, 96,690 bytes uncompressed → 3,342 bytes
+compressed, ~28.9x ratio (real measured gzip output, not estimated).
+
+**Breaking check:** full v0.1–v0.7 regression suite re-ran, still green —
+`go test ./... -race -count=10` clean (bumped run count since this
+touched the shared apply loop every replicated write goes through).
+
+**Not yet implemented:** no configurable compression codec (gzip only),
+no at-rest encryption (noted as a real gap, not silently skipped).
+
 ## v0.7 — Benchmarking + chaos harness
 
 **Adds:** `benchmarks/` load generator + chaos harness, `cmd/benchmark`

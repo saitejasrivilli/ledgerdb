@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/saitejasrivilli/ledgerdb/batch"
 	"github.com/saitejasrivilli/ledgerdb/raft"
 	"github.com/saitejasrivilli/ledgerdb/storage"
 )
@@ -48,6 +49,15 @@ func NewReplicatedPartition(net *raft.Network, me int, peers []int, dir string) 
 // doc. Because Raft commits in the same order on every replica, the
 // resulting storage offset for a given logical write is identical across
 // replicas.
+//
+// Since v0.8: a committed entry may be a batch.Encode-d, gzip-compressed
+// blob of several messages (see docs/design_batching_compression.md).
+// TryDecode transparently unpacks it back into individual messages before
+// they're appended, so consumers still see one message per storage
+// offset regardless of whether the producer batched them. A payload
+// that isn't batch-encoded (every write from v0.4-v0.7, unmodified) is
+// appended as-is — TryDecode's ok=false path preserves that behavior
+// exactly.
 func (rp *ReplicatedPartition) applyLoop() {
 	for msg := range rp.applyCh {
 		if !msg.CommandValid {
@@ -57,10 +67,17 @@ func (rp *ReplicatedPartition) applyLoop() {
 		if !ok {
 			continue
 		}
+
+		messages := [][]byte{payload}
+		if decoded, isBatch, err := batch.TryDecode(payload); err == nil && isBatch {
+			messages = decoded
+		}
+
 		rp.mu.Lock()
-		if _, err := rp.log.Append(payload); err != nil {
-			rp.mu.Unlock()
-			continue
+		for _, m := range messages {
+			if _, err := rp.log.Append(m); err != nil {
+				break
+			}
 		}
 		rp.lastAppliedRaftIndex = msg.CommandIndex
 		rp.mu.Unlock()
