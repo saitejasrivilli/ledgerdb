@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.7 — Benchmarking + chaos harness
+
+**Adds:** `benchmarks/` load generator + chaos harness, `cmd/benchmark`
+runnable that produces `benchmarks/results/v0.7_baseline.json` — the
+first real, citable numbers in this project. Nothing before this version
+gets a resume bullet per the versioned build plan.
+
+**Design doc:** `docs/design_benchmarking.md` — includes an honest
+disclosure that `ack=all` latency is dominated by a 10ms poll interval in
+`WaitApplied`, not pure consensus latency.
+
+**Measured (see `benchmarks/results/v0.7_baseline.json` for full output):**
+- ack=0: ~332k ops/sec (in-process, no quorum wait)
+- ack=1: ~447k ops/sec (leader-local accept only)
+- ack=all: ~60 ops/sec, p50 21ms (bounded by poll granularity, disclosed above)
+- Chaos: leader-kill detection ~316ms, first successful write after
+  recovery ~326ms
+
+**Tests:** `benchmarks/harness_test.go` — smoke tests only (per design
+doc: this version adds measurement, not new correctness surface, so no
+new regression-suite entries this time).
+
+**Breaking check:** full v0.1–v0.6 regression suite re-ran, still green —
+`go test ./... -race -count=5` clean.
+
 ## v0.6 — Producer acknowledgment levels
 
 **Adds:** `producer.Write` with three genuinely different commit paths —

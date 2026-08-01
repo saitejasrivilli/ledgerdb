@@ -1,0 +1,36 @@
+{
+  "generated_at": "2026-08-01T16:12:10Z",
+  "throughput": [
+    {
+      "ack_level": "ack=0",
+      "writes": 995321,
+      "duration_sec": 3.000000834,
+      "ops_per_sec": 331773.5744336129,
+      "p50_ms": 0,
+      "p95_ms": 0.004,
+      "p99_ms": 0.019
+    },
+    {
+      "ack_level": "ack=1",
+      "writes": 1340015,
+      "duration_sec": 3.000000375,
+      "ops_per_sec": 446671.61083271535,
+      "p50_ms": 0,
+      "p95_ms": 0.004,
+      "p99_ms": 0.016
+    },
+    {
+      "ack_level": "ack=all",
+      "writes": 181,
+      "duration_sec": 3.001546209,
+      "ops_per_sec": 60.30225337103914,
+      "p50_ms": 21.003,
+      "p95_ms": 22.065,
+      "p99_ms": 22.134
+    }
+  ],
+  "chaos": {
+    "detection_ms": 316.096,
+    "recovery_ms": 326.472
+  }
+}
