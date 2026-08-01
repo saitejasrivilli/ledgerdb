@@ -1,5 +1,40 @@
 # Changelog
 
+## v0.10 — Security: TLS + ACLs
+
+**Adds:** `security/tls.go` — real self-signed CA + server cert
+generation, `crypto/tls` config construction, tested against a real
+`net/tcp` + TLS listener/dial pair (not simulated). `security/acl.go` —
+deny-by-default ACL (`Grant`/`Allowed`) enforced at the request-handling
+boundary via `CheckedWrite`/`CheckedRead` wrappers around
+`producer.Write`/`ReplicatedPartition.ReadLocal`.
+
+**Design doc:** `docs/design_security.md` — states explicitly that TLS
+isn't wired into the in-process Raft transport (which has no real
+sockets to secure) rather than implying it is.
+
+**Tests:** `tests/regression/v0_10_security_test.go`
+- `TestV10_TLSHandshakeRequiresCorrectCA` — real TLS listener/dial: wrong
+  CA fails the handshake, correct CA succeeds
+- `TestV10_UnauthorizedClientRejected` — an identity with no ACL grant is
+  rejected on both read and write
+- `TestV10_AuthorizedClientStillWorks` — a granted identity's read/write
+  both succeed end-to-end through a real replicated cluster
+
+**Bug caught while writing the TLS test:** `tls.Listen`'s `Accept()`
+returns before the handshake completes (handshake is lazy, deferred to
+first Read/Write) — the test server was closing the connection
+immediately after accept, racing the client's handshake and producing a
+spurious EOF even for the correct-CA case. Fixed by explicitly calling
+`Handshake()` server-side before closing.
+
+**Breaking check:** full v0.1–v0.9 regression suite re-ran, still green —
+`go test ./... -race -count=10` clean.
+
+**Not yet implemented, stated honestly:** TLS not wired into the live
+Raft/replication RPC path (no real socket transport exists yet); no
+at-rest encryption; no dynamic ACL management API.
+
 ## v0.9 — Tiered storage
 
 **Adds:** `storage.ColdStore` interface (+ `LocalDirColdStore`, a local-
