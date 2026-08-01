@@ -33,9 +33,14 @@ and what bugs were caught and fixed along the way, per version.
 Every number below traces to a file in `benchmarks/results/`.
 
 - **Chaos recovery** (`v0.7_baseline.json`): leader-kill detection ~316ms,
-  first successful write after recovery ~326ms
-- **Compression** (`v0.8_compression.json`): ~28.9x gzip ratio on 1000
-  realistic log-line messages
+  first successful write after recovery ~326ms. This is a *process-crash*
+  recovery number, not a network-partition one — see "What this project
+  is honest about not doing" below.
+- **Compression** (`v0.8_compression.json`): ~6.9x gzip ratio on 1000
+  log-line messages with realistic per-line variation (varying paths,
+  latencies, UUIDs, occasional free-text errors). An earlier corpus with
+  only two varying integers per line measured ~28.9x — an inflated number
+  from unrealistically repetitive test data, replaced once noticed.
 - **MVCC vs. lock-based reads** (`v1.0_mvcc.json`): measured honestly —
   MVCC was *slower* (~0.58x) on a single-hot-document, low-contention
   workload; see [docs/design_mvcc.md](docs/design_mvcc.md) for why, and
@@ -64,11 +69,37 @@ go run ./cmd/mvcc_benchmark         # MVCC vs. lock-based concurrent reads
 ## What this project is honest about not doing
 
 Every design doc includes an explicit "what this version deliberately
-does NOT do" section — gaps are stated, not hidden. Notable ones: no real
-network transport (Raft/replication run over an in-process simulated
-network throughout — see `docs/design_benchmarking.md`), no TLS wired
-into that transport (v0.10 builds and tests the real cert/handshake
-machinery, explicitly not plugged into a transport that doesn't have real
-sockets), no at-rest encryption, no real MinIO/Flink/Spark integration
-(v0.9/v0.13 build the correctness-proving logic against interfaces those
-systems would satisfy, not against the real systems themselves).
+does NOT do" section — gaps are stated, not hidden.
+
+**The one that matters most: no real network transport.** Raft,
+replication, and every chaos/recovery number in this repo run over an
+in-process simulated network (`raft/network.go`), not real sockets. That
+means none of it has ever been exercised against real packet loss,
+reordering, or an actual network partition (both sides of a split still
+thinking they're the leader) — only simulated process disconnect, which
+is a *process-crash* fault model, not a *partition* fault model. Those
+are different claims: "recovers from a node dying" is proven here;
+"tolerates a network partition" is not, and shouldn't be implied by the
+316ms/326ms numbers above. Swapping in a real TCP/gRPC transport (even
+just localhost, or across two Docker containers) so packet drops and
+partitions can be injected for real is the highest-value gap left in
+this project.
+
+**Everything else here is interface-tested, not integration-tested
+against the real external system:**
+- TLS (v0.10): real cert generation and a real TLS handshake are tested
+  against a real `net/tcp` listener — but it's not wired into the Raft/
+  replication transport above, which has no real sockets to secure yet.
+- Tiered storage (v0.9): `ColdStore` is a real interface with real
+  upload-then-delete migration logic, tested against a local-directory
+  stand-in — never run against an actual MinIO/S3 endpoint.
+- Stream processing (v0.13): the windowing/aggregation logic is real and
+  tested — it's not a Flink or Spark job, by design (see
+  `docs/design_stream_processing.md`).
+
+When any of these numbers or components go into a resume bullet, that
+distinction should travel with them — "implemented and unit-tested TLS
+handshake + ACL enforcement" is accurate; "TLS-secured broker
+communication" is not, since no broker communication is on a real socket
+yet. Same pattern for "designed and tested against a MinIO-compatible
+interface" vs. "integrated with MinIO."

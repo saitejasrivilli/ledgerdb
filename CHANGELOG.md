@@ -231,8 +231,13 @@ unaffected — verified by test, not just by argument).
   right after
 
 **Benchmark:** `benchmarks/results/v0.8_compression.json` — 1000
-realistic log-line messages, 96,690 bytes uncompressed → 3,342 bytes
-compressed, ~28.9x ratio (real measured gzip output, not estimated).
+log-line messages with realistic per-line variation (varying paths,
+latencies, UUIDs, occasional free-text errors), 192,812 bytes
+uncompressed → 27,873 bytes compressed, ~6.9x ratio. *Corrected after
+initial review:* the original corpus varied only two integers per line,
+measuring an inflated ~28.9x that didn't reflect real log diversity —
+flagged as suspicious and replaced with a higher-entropy corpus rather
+than left in place.
 
 **Breaking check:** full v0.1–v0.7 regression suite re-ran, still green —
 `go test ./... -race -count=10` clean (bumped run count since this
