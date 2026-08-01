@@ -1,0 +1,7 @@
+{
+  "locked_reads_per_sec": 10165461.645204129,
+  "mvcc_reads_per_sec": 5902122.153989569,
+  "speedup": 0.5806054225559031,
+  "concurrent_readers": 8,
+  "duration_sec": 2
+}

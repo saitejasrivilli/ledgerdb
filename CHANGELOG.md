@@ -1,5 +1,60 @@
 # Changelog
 
+## v1.0 — Document store + MVCC
+
+**Adds:** `docstore/` — a document store built on `raft.Raft` (v0.1) and
+`storage.Log` (v0.2) directly, the same composition pattern v0.4 used,
+applied here to an indexed in-memory document map instead of a flat log.
+JSON documents, one configurable hash index, multi-document transactions
+(batch-of-mutations as one Raft entry, validate-all-then-commit-all at
+apply time). Built the naive `LockedStore` (single mutex) baseline
+first, per the versioned plan's explicit instruction, then `MVCCStore` —
+version chains per document, snapshot reads pinned to a Raft commit
+index so a reader's view is consistent throughout, regardless of writes
+committing afterward.
+
+**Design docs:** `docs/design_document_store.md`, `docs/design_mvcc.md`
+
+**Tests:** `tests/regression/v1_0_document_store_test.go`,
+`v1_0_durability_test.go`
+- `TestV1_0_ConcurrentReadDuringWriteSeesConsistentSnapshot` — a snapshot
+  taken before two documents are updated sees the pre-update value for
+  BOTH, consistently, even though updates commit to each independently
+  before the snapshot's reads happen
+- `TestV1_0_TransactionRollbackOnPartialFailure` — a transaction with one
+  valid and one precondition-failing mutation rejects both; the valid
+  document is provably unchanged afterward
+- `TestV1_0_IndexedLookupCorrectness` — hash-indexed queries stay correct
+  across an update and a delete, and an earlier snapshot's result set
+  doesn't mutate underneath it
+- `TestV1_0_HundredKillAndRecoverCyclesNoDataLoss` — the plan's required
+  100-cycle durability check: kill leader, elect new one, write, rejoin,
+  verify every prior document, repeat 100x, zero data loss
+
+**Real perf bug found and fixed via the MVCC benchmark:**
+`Snapshot.Get` did a linear scan over a document's version chain to find
+the latest version at-or-before the snapshot point — under sustained
+writes to the same document, the chain grows unboundedly and every read
+degrades toward O(chain length). Fixed with a binary search (`sort.Search`)
+since the chain is append-only in increasing commit-index order.
+
+**Benchmark, reported honestly even though it isn't flattering:**
+`benchmarks/results/v1.0_mvcc.json` — measured MVCC concurrent-read
+throughput at ~0.58x the lock-based baseline on a single-hot-document
+workload, not faster. `docs/design_mvcc.md` explains why (mutex overhead
+is negligible when the protected work is nanosecond-fast and a single key
+sees no real contention — this benchmark doesn't exercise the scenario
+MVCC actually helps with) rather than reshaping the benchmark until the
+number looked better, per the project's hard constraint against
+estimated/adjusted numbers.
+
+**Breaking check:** full v0.1–v0.13 regression suite re-ran, still green
+— `go test ./... -race -count=10` clean across the entire stack.
+
+**Not yet implemented:** no automatic/background GC scheduling for old
+MVCC versions (manual `GCBefore` only); no cross-partition transactions;
+no secondary indexes beyond the one configurable hash index.
+
 ## v0.13 — Stream processing integration
 
 **Adds:** `streaming.ProcessTumblingWindows` — real tumbling-window
