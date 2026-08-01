@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.5 — Consumer groups + rebalancing
+
+**Adds:** `group.Coordinator` — round-robin partition assignment across
+live consumers in a group, deterministic recompute on join/leave, and a
+heartbeat-expiry loop (same threshold-based pattern as v0.1's Raft health
+checks) that evicts and rebalances on crash.
+
+**Design doc:** `docs/design_consumer_groups.md`
+
+**Tests:** `tests/regression/v0_5_consumer_groups_test.go`
+- `TestV05_RebalanceOnJoin` — assignment stays balanced as members join
+- `TestV05_RebalanceOnCrash` — a consumer that stops heartbeating gets
+  evicted, its partitions redistributed
+- `TestV05_RebalanceOnLeave` — clean-shutdown path rebalances immediately,
+  no heartbeat-timeout wait
+- `TestV05_NoPartitionStarvation` — assignment stays within
+  floor/ceil(P/C) across several partition/consumer count combinations
+
+**Breaking check:** full v0.1–v0.4 regression suite re-ran unmodified,
+still green — `go test ./... -race -count=5` clean.
+
+**Not yet implemented:** no managed consumer-offset commit/tracking API
+(consumers track their own read position); stop-the-world rebalancing
+only, no cooperative/incremental variant.
+
 ## v0.4 — Replication (Raft + partitions combined)
 
 **Adds:** `replication.ReplicatedPartition` — one Raft group (v0.1,
