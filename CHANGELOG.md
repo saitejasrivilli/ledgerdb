@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.16 — REST API
+
+**Adds:** `api/` — a thin `net/http` layer over `docstore` (v1.0):
+`PUT`/`GET`/`DELETE` on `/docs/{id}`, `GET /docs?field=value` (query by
+the one indexed field docstore supports), `GET /docs` (full scan).
+Writes block on `WaitApplied` before returning — a `200`/`204` means
+committed and visible, not just locally accepted, matching the ack=all
+guarantee already proved in v0.6 rather than quietly reintroducing a
+weaker one for a faster HTTP response.
+
+**Design doc:** `docs/design_rest_api.md`
+
+**Tests:** `tests/regression/v0_16_rest_api_test.go` —
+`TestRESTAPI_CRUDRoundTrip` drives PUT/GET/DELETE/query through real
+`net/http` requests against a real listening HTTP server
+(`httptest.NewServer`, not the in-process `NewRecorder` shortcut),
+backed by a real 3-node replicated cluster.
+
+**Breaking check:** full regression suite re-ran, still green — `go test
+./... -race -count=3` clean.
+
+**Not yet implemented:** no pagination, no auth wired in (v0.10's ACL
+layer exists but isn't connected here — same explicit gap already stated
+for `mongowire`), no OpenAPI spec.
+
 ## v0.15 — MongoDB wire protocol translation
 
 **Adds:** `mongowire/` — a TCP server speaking a deliberately small

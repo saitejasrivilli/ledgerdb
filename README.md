@@ -108,6 +108,7 @@ on top, each with its own design doc.
 | v0.14 | Real network transport (TCP, real partition test) | [docs/design_real_transport.md](docs/design_real_transport.md) |
 | v0.14.4 | Real `iptables`/`tc netem` fault injection | [docs/design_network_fault.md](docs/design_network_fault.md) |
 | v0.15 | MongoDB wire protocol translation | [docs/design_wire_protocol.md](docs/design_wire_protocol.md) |
+| v0.16 | REST API | [docs/design_rest_api.md](docs/design_rest_api.md) |
 
 See [CHANGELOG.md](CHANGELOG.md) for what shipped, what tests cover it,
 and what bugs were caught and fixed along the way, per version.
