@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.13 — Stream processing integration
+
+**Adds:** `streaming.ProcessTumblingWindows` — real tumbling-window
+(processing-time) aggregation over a stream of timestamps, emitting a
+count per window from earliest to latest touched, including zero-count
+gap windows. `streaming.Sink` interface + `InMemorySink` (same "interface
+the test double satisfies" pattern as `storage.ColdStore` in v0.9).
+
+**Design doc:** `docs/design_stream_processing.md` — states explicitly
+why this is a real Go windowing job rather than a real Flink/Spark
+cluster (infra plumbing vs. the actual thing being proven: correct
+windowed-aggregation semantics), a considered tradeoff, not a shortcut
+taken quietly.
+
+**Tests:** `tests/regression/v0_13_stream_processing_test.go`
+- `TestV13_WindowedAggregationCorrectness` — hand-constructed timestamp
+  sequence spanning 4 windows (including one all-zero window and events
+  landing exactly on a window boundary), emitted counts checked exactly
+  against hand-computed values
+- `TestV13_SingleEventEmitsOneWindow` / `TestV13_NoEventsEmitsNoWindows` —
+  edge cases at the boundaries of the aggregation function
+
+**Breaking check:** full v0.1–v0.12 regression suite re-ran, still green
+— `go test ./... -race -count=5` clean.
+
+**Not yet implemented:** no event-time windowing/watermarks/late-data
+handling (processing-time only); no windowed joins or multi-stream
+aggregation.
+
 ## v0.12 — Schema validation
 
 **Adds:** `schema.Registry` — one current schema per partition, JSON
