@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.9 — Tiered storage
+
+**Adds:** `storage.ColdStore` interface (+ `LocalDirColdStore`, a local-
+directory stand-in for MinIO/S3, keeping the "no cloud services
+required" constraint intact) and `Log.TierSegments()` — migrates closed
+segments to cold storage, upload-confirmed-before-local-delete, never
+tiers the active segment. Reads transparently resolve to cold storage
+per-call (no caching, by design — see doc) when a segment has been
+tiered out.
+
+**Design doc:** `docs/design_tiered_storage.md`
+
+**Tests:** `tests/regression/v0_9_tiered_storage_test.go`
+- `TestV09_ReadFromColdTierAfterMigration` — 40 records across several
+  segments, tier them out, every offset still reads back byte-identical
+- `TestV09_NoDataLossOnFailedUpload` — a `FailingColdStore` forces the
+  upload to error; local segment data must survive untouched (the
+  "never delete before confirmed durable" invariant, tested directly)
+- `TestV09_ActiveSegmentNeverTiers` — the sole/active segment is never
+  eligible for migration
+
+**Breaking check:** full v0.1–v0.8 regression suite re-ran, still green —
+`go test ./... -race -count=10` clean (this touched `storage/segment.go`
+internals every earlier version's tests already exercise).
+
+**Not yet implemented:** no real MinIO wiring exercised in tests (the
+`ColdStore` interface makes that a drop-in swap later, not a rework); no
+persistence of which segments are tiered across a process restart; no
+re-tiering back to local once cold.
+
 ## v0.8 — Batching + compression
 
 **Adds:** `batch.Batcher` — flushes on count or linger time, whichever

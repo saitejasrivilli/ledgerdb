@@ -19,6 +19,7 @@ type Log struct {
 	maxSegmentBytes int64
 	segments        []*segment
 	active          *segment
+	coldStore       ColdStore // set via EnableTiering (v0.9), nil otherwise
 }
 
 // Open opens (or creates) a log rooted at dir, recovering any existing

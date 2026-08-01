@@ -25,6 +25,14 @@ type segment struct {
 
 	logFile   *os.File
 	indexFile *os.File
+
+	// tiered segments (v0.9) have had their local files deleted after a
+	// confirmed upload to a ColdStore, identified by coldKey. Reads fetch
+	// fresh from cold storage per call — see docs/design_tiered_storage.md
+	// for why this deliberately doesn't cache.
+	tiered    bool
+	coldKey   string
+	coldStore ColdStore
 }
 
 func segmentPaths(dir string, baseOffset int) (logPath, indexPath string) {
@@ -143,8 +151,16 @@ func (s *segment) read(offset int) ([]byte, error) {
 		return nil, fmt.Errorf("offset %d out of range for segment base %d", offset, s.baseOffset)
 	}
 	relOffset := uint32(offset - s.baseOffset)
-
 	entryPos := int64(relOffset) * indexEntrySize
+
+	if s.tiered {
+		return s.readTiered(entryPos)
+	}
+	return s.readLocal(entryPos)
+}
+
+func (s *segment) readLocal(entryPos int64) ([]byte, error) {
+
 	entryBuf := make([]byte, indexEntrySize)
 	if _, err := s.indexFile.ReadAt(entryBuf, entryPos); err != nil {
 		return nil, fmt.Errorf("read index entry: %w", err)
@@ -164,15 +180,89 @@ func (s *segment) read(offset int) ([]byte, error) {
 	return payload, nil
 }
 
+// readTiered fetches this segment's bytes fresh from cold storage (no
+// caching, see docs/design_tiered_storage.md) and resolves the read the
+// same way a local segment would.
+func (s *segment) readTiered(entryPos int64) ([]byte, error) {
+	logBytes, indexBytes, err := s.coldStore.Get(s.coldKey)
+	if err != nil {
+		return nil, fmt.Errorf("fetch tiered segment %s: %w", s.coldKey, err)
+	}
+
+	if entryPos+indexEntrySize > int64(len(indexBytes)) {
+		return nil, fmt.Errorf("tiered index entry out of range at pos %d", entryPos)
+	}
+	entryBuf := indexBytes[entryPos : entryPos+indexEntrySize]
+	position := int64(binary.BigEndian.Uint32(entryBuf[4:8]))
+
+	if position+lenPrefixSize > int64(len(logBytes)) {
+		return nil, fmt.Errorf("tiered log length prefix out of range at pos %d", position)
+	}
+	recLen := int64(binary.BigEndian.Uint32(logBytes[position : position+lenPrefixSize]))
+
+	start := position + lenPrefixSize
+	if start+recLen > int64(len(logBytes)) {
+		return nil, fmt.Errorf("tiered payload out of range at pos %d", start)
+	}
+	payload := make([]byte, recLen)
+	copy(payload, logBytes[start:start+recLen])
+	return payload, nil
+}
+
 func (s *segment) close() error {
+	if s.tiered {
+		return nil
+	}
 	if err := s.logFile.Close(); err != nil {
 		return err
 	}
 	return s.indexFile.Close()
 }
 
+// tierOut uploads this segment's current local bytes to coldStore under
+// key, then only on confirmed success deletes the local files and marks
+// the segment tiered — never the other way around (see design doc's
+// "never delete before confirmed durable" invariant).
+func (s *segment) tierOut(coldStore ColdStore, key string) error {
+	logPath, indexPath := segmentPaths(s.dir, s.baseOffset)
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		return fmt.Errorf("read local log for tiering: %w", err)
+	}
+	indexBytes, err := os.ReadFile(indexPath)
+	if err != nil {
+		return fmt.Errorf("read local index for tiering: %w", err)
+	}
+
+	if err := coldStore.Put(key, logBytes, indexBytes); err != nil {
+		return fmt.Errorf("upload to cold store: %w", err)
+	}
+
+	// upload confirmed durable — safe to close and delete local files now
+	if err := s.logFile.Close(); err != nil {
+		return err
+	}
+	if err := s.indexFile.Close(); err != nil {
+		return err
+	}
+	if err := os.Remove(logPath); err != nil {
+		return err
+	}
+	if err := os.Remove(indexPath); err != nil {
+		return err
+	}
+
+	s.tiered = true
+	s.coldKey = key
+	s.coldStore = coldStore
+	return nil
+}
+
 func (s *segment) remove() error {
 	s.close()
+	if s.tiered {
+		return s.coldStore.Delete(s.coldKey)
+	}
 	logPath, indexPath := segmentPaths(s.dir, s.baseOffset)
 	if err := os.Remove(logPath); err != nil {
 		return err
