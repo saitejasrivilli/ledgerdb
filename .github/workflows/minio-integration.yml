@@ -9,30 +9,25 @@ on:
 jobs:
   minio-integration:
     runs-on: ubuntu-latest
-    services:
-      # bitnami/minio's entrypoint starts the server automatically from
-      # these env vars — unlike the official minio/minio image, it
-      # doesn't need a custom `command:` override, which GitHub Actions'
-      # `services:` block doesn't support anyway.
-      minio:
-        image: bitnami/minio:latest
-        ports:
-          - 9000:9000
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
           go-version: "1.23"
+
+      # Run MinIO directly via `docker run` instead of GitHub Actions'
+      # `services:` block — `services:` can't override a container's
+      # command/args, and the official minio/minio image needs
+      # `server /data` passed explicitly or it just prints help and
+      # exits. Running it ourselves gives full control over that.
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio \
+            -p 9000:9000 -p 9001:9001 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data --console-address :9001
 
       - name: Wait for MinIO to be reachable
         run: |
@@ -44,6 +39,7 @@ jobs:
             sleep 2
           done
           echo "MinIO never became reachable"
+          docker logs minio || true
           exit 1
 
       - name: Run real MinIO integration test
@@ -52,3 +48,7 @@ jobs:
           MINIO_ACCESS_KEY: minioadmin
           MINIO_SECRET_KEY: minioadmin
         run: go test ./tests/integration/... -v -run TestRealMinIO
+
+      - name: Stop MinIO
+        if: always()
+        run: docker rm -f minio || true
