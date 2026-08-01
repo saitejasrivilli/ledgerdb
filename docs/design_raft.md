@@ -59,6 +59,18 @@ hand-waved. `go test ./raft/... -v` and `go test ./raft/... -race` both
 green, repeated runs (`go test ./raft/... -race -count=10`) to catch
 timing-dependent flakes before tagging v0.1.
 
+## Addendum (found during v0.6): commit rule for prior-term entries
+§5.4.2 of the Raft paper: a leader must never advance `commitIndex` by
+counting replicas of a log entry from an earlier term, even if a majority
+already has it — only entries from the leader's *own* current term can be
+counted directly (doing so then transitively commits everything before
+them too, since logs are prefix-consistent). Without this rule a newly
+elected leader can sit indefinitely with a correctly-replicated entry it
+never marks committed. Fixed by appending a no-op entry immediately on
+election, giving the new leader something in its own term to commit,
+which pulls everything before it along. See `v0.6` changelog entry for
+the test that caught this (`TestV06_AckAllSurvivesLeaderCrash`).
+
 ## Deliberate non-goals for v0.1
 - Cluster membership changes (add/remove nodes) — out of scope until
   explicitly revisited, not needed until real deployment tooling exists

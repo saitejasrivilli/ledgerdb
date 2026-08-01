@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.6 — Producer acknowledgment levels
+
+**Adds:** `producer.Write` with three genuinely different commit paths —
+`AckNone` (fire-and-forget), `AckLeader` (wait for leader-local accept
+only), `AckAll` (wait for Raft's own majority-commit rule via
+`WaitApplied` on the leader).
+
+**Design doc:** `docs/design_ack_levels.md`
+
+**Tests:** `tests/regression/v0_6_ack_levels_test.go`
+- `TestV06_AckAllSurvivesLeaderCrash` — hard invariant: an ack=all write
+  is present on whatever replica wins the next election, no exceptions
+- `TestV06_AckLeaderCanLoseDataOnLeaderCrash` — demonstrates ack=1's
+  documented weakness concretely: isolate leader, write, kill leader,
+  entry is provably gone from the surviving quorum
+- `TestV06_AckNoneNeverBlocksOrPanics` — ack=0 never blocks or errors,
+  even against a non-leader
+
+**Real Raft bug found and fixed by `TestV06_AckAllSurvivesLeaderCrash`:**
+a newly-elected leader could hold a committed entry in its log yet never
+advance `commitIndex` past it, because Raft's own commit rule (§5.4.2)
+forbids counting replicas of a prior-term entry directly — only entries
+from the leader's *current* term can be counted, and doing so transitively
+commits everything before them. Fixed by appending a no-op entry
+immediately on election (`raft/raft.go` `becomeLeader`), which gives the
+new leader something in its own term to commit. `applyTicker` now skips
+emitting `ApplyMsg` for no-op entries (`Command == nil`) so downstream
+apply loops don't need to special-case them.
+
+**Breaking check:** full v0.1–v0.5 regression suite re-ran, still green —
+`go test ./... -race -count=10` clean, 10 consecutive runs (bumped from 5
+given this touched raft.go's core commit logic).
+
 ## v0.5 — Consumer groups + rebalancing
 
 **Adds:** `group.Coordinator` — round-robin partition assignment across

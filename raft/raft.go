@@ -201,6 +201,19 @@ func (rf *Raft) becomeLeader() {
 		rf.nextIndex[peer] = lastIndex + 1
 		rf.matchIndex[peer] = 0
 	}
+
+	// §5.4.2: a leader can only advance commitIndex by counting replicas
+	// of entries from its OWN term — it must never commit by counting
+	// replicas of a prior-term entry directly, or a future leader could
+	// disagree on whether that entry was really committed. Appending a
+	// no-op immediately on election gives the leader something in its own
+	// term to commit, which (once a majority replicates it) also commits
+	// everything before it. Without this, a newly elected leader can sit
+	// forever with committed-but-uncounted entries in its log.
+	noopIndex := lastIndex + 1
+	rf.log = append(rf.log, LogEntry{Term: rf.currentTerm, Index: noopIndex})
+	rf.matchIndex[rf.me] = noopIndex
+
 	go rf.leaderHeartbeatLoop(rf.currentTerm)
 }
 
@@ -232,6 +245,12 @@ func (rf *Raft) applyTicker() {
 		for rf.lastApplied < rf.commitIndex {
 			rf.lastApplied++
 			entry := rf.log[rf.lastApplied]
+			if entry.Command == nil {
+				// no-op entry appended on election (see becomeLeader) —
+				// advances lastApplied/commitIndex but has nothing for
+				// the state machine to apply.
+				continue
+			}
 			msgs = append(msgs, ApplyMsg{
 				CommandValid: true,
 				Command:      entry.Command,
