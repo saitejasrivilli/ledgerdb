@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.2 — Single-partition append-only log
+
+**Adds:** Segment-based storage layer (`storage/`) — fixed-size segment
+files with length-prefixed records and a fixed-width offset index, segment
+rolling, retention-based compaction (delete whole old segments, never the
+active one), crash recovery via index rebuild-by-scan on open.
+
+**Design doc:** `docs/design_log_storage.md`
+
+**Tests:** `tests/regression/v0_2_log_storage_test.go`
+- `TestV02_SequentialWriteRead` — 100 sequential offsets round-trip
+- `TestV02_SegmentRoll` — tiny max-segment-size forces rolls, reads still
+  correct across segment boundaries
+- `TestV02_CrashRecovery` — close/reopen rebuilds index, offsets continue
+  correctly after recovery
+- `TestV02_Compaction` — old segments deleted, retained data still readable,
+  compacted-away offsets correctly error (not silently wrong)
+
+**Breaking check:** all v0.1 Raft tests re-ran unmodified, still green —
+`go test ./... -race -count=5` clean across both packages.
+
+**Not yet implemented:** no Raft integration for this log yet (v0.4), no
+partitioning (v0.3), no compression (v0.8).
+
 ## v0.1 — Raft consensus foundation
 
 **Adds:** Leader election (randomized timeout, RequestVote RPC w/
