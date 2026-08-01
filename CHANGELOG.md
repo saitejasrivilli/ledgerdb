@@ -48,14 +48,32 @@ same range as v0.7's simulated 316ms/326ms because election-timeout
 duration dominates both measurements, not transport speed. Reported
 alongside the v0.7 number, not as a replacement for it.
 
-**Breaking check:** full v0.1–v1.0 regression suite re-ran, still green
-— `go test ./... -race -count=5` clean; the new partition test alone run
-20x to confirm the fix held (see bug note above).
+**TLS wired into the real transport, same version:** `NewTCPTransportTLS`
+plugs v0.10's cert/handshake machinery into `TCPTransport` —
+`TestV0_14_TLSSecuredRaftTrafficWorks` proves Raft commits over a
+TLS-secured socket, `TestV0_14_WrongCARaftPeerCannotJoin` proves a
+mismatched-CA node can never complete a handshake with the cluster (a
+2-node cluster with one impostor never elects a leader — it needs the
+impostor's vote and can never get it).
 
-**Not yet implemented, stated honestly:** TLS not wired into
-`TCPTransport` (real sockets now exist for it — natural next step, not
-done here); no real packet loss/reordering test under sustained load; no
-cross-host test (loopback TCP only).
+**Real cert bug found doing this:** `security.IssueServerCert` (v0.10)
+only set `DNSNames`, not `IPAddresses` — invisible when `ServerName` is
+an actual hostname (`"localhost"`, what v0.10's own test used), but every
+handshake using a literal-IP `ServerName` (`"127.0.0.1"`, what these new
+tests use) silently failed, since Go's TLS verification checks
+`IPAddresses` for that case. Fixed by setting whichever SAN field
+matches what `net.ParseIP` says about the host; v0.10's original test
+unaffected.
+
+**Breaking check:** full v0.1–v1.0 regression suite re-ran, still green
+— `go test ./... -race -count=5` clean; the partition test run 20x to
+confirm its fix held (see bug note above).
+
+**Not yet implemented, stated honestly:** tiered storage against a real
+MinIO instance was attempted as a companion fix in this same pass but
+needs a running Docker daemon, unavailable in this build environment —
+left as an explicit next step. No real packet loss/reordering test under
+sustained load; no cross-host test (loopback TCP only).
 
 ## v1.0 — Document store + MVCC
 

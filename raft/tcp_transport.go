@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"crypto/tls"
 	"encoding/gob"
 	"net"
 	"net/rpc"
@@ -56,28 +57,51 @@ func (s *rpcService) AppendEntries(args *AppendEntriesArgs, reply *AppendEntries
 // timeouts, and a real network partition (a client that literally cannot
 // open a connection to a peer, not a simulated "disconnected" flag).
 type TCPTransport struct {
-	me       int
-	addrs    map[int]string
-	timeout  time.Duration
-	listener net.Listener
+	me        int
+	addrs     map[int]string
+	timeout   time.Duration
+	listener  net.Listener
+	clientTLS *tls.Config // nil means plain TCP dial
 
 	mu      sync.Mutex
 	clients map[int]*rpc.Client
 	blocked map[int]bool
 }
 
-// NewTCPTransport starts listening on addrs[me] and returns the
-// transport plus the rpcService it registered — callers must call
-// Bind(rf) on that service once the *Raft peer using this transport
-// exists (see raft.MakeWithTransport).
+// NewTCPTransport starts listening on addrs[me] over plain TCP and
+// returns the transport plus the rpcService it registered — callers
+// must call Bind(rf) on that service once the *Raft peer using this
+// transport exists (see raft.MakeWithTransport).
 func NewTCPTransport(me int, addrs map[int]string) (*TCPTransport, *rpcService, error) {
+	return newTCPTransport(me, addrs, nil, nil)
+}
+
+// NewTCPTransportTLS is the same as NewTCPTransport but listens and
+// dials over TLS — serverTLSConfig secures this node's listener,
+// clientTLSConfig is used for every outbound dial to a peer. Callers
+// build both with the real cert/handshake machinery from package
+// security (v0.10) — this package can't import security directly (that
+// would be an import cycle: security -> replication -> raft), so it
+// takes plain *tls.Config instead, which is exactly what security's
+// ServerTLSConfig/ClientTLSConfig already return.
+func NewTCPTransportTLS(me int, addrs map[int]string, serverTLSConfig, clientTLSConfig *tls.Config) (*TCPTransport, *rpcService, error) {
+	return newTCPTransport(me, addrs, serverTLSConfig, clientTLSConfig)
+}
+
+func newTCPTransport(me int, addrs map[int]string, serverTLSConfig, clientTLSConfig *tls.Config) (*TCPTransport, *rpcService, error) {
 	svc := &rpcService{}
 	server := rpc.NewServer()
 	if err := server.RegisterName("Raft", svc); err != nil {
 		return nil, nil, err
 	}
 
-	listener, err := net.Listen("tcp", addrs[me])
+	var listener net.Listener
+	var err error
+	if serverTLSConfig != nil {
+		listener, err = tls.Listen("tcp", addrs[me], serverTLSConfig)
+	} else {
+		listener, err = net.Listen("tcp", addrs[me])
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -93,12 +117,13 @@ func NewTCPTransport(me int, addrs map[int]string) (*TCPTransport, *rpcService, 
 	}()
 
 	t := &TCPTransport{
-		me:       me,
-		addrs:    addrs,
-		timeout:  500 * time.Millisecond,
-		listener: listener,
-		clients:  make(map[int]*rpc.Client),
-		blocked:  make(map[int]bool),
+		me:        me,
+		addrs:     addrs,
+		timeout:   500 * time.Millisecond,
+		listener:  listener,
+		clientTLS: clientTLSConfig,
+		clients:   make(map[int]*rpc.Client),
+		blocked:   make(map[int]bool),
 	}
 	return t, svc, nil
 }
@@ -142,10 +167,19 @@ func (t *TCPTransport) getClient(peer int) (*rpc.Client, error) {
 	if c, ok := t.clients[peer]; ok {
 		return c, nil
 	}
-	conn, err := net.DialTimeout("tcp", t.addrs[peer], t.timeout)
+
+	var conn net.Conn
+	var err error
+	if t.clientTLS != nil {
+		dialer := &net.Dialer{Timeout: t.timeout}
+		conn, err = tls.DialWithDialer(dialer, "tcp", t.addrs[peer], t.clientTLS)
+	} else {
+		conn, err = net.DialTimeout("tcp", t.addrs[peer], t.timeout)
+	}
 	if err != nil {
 		return nil, err
 	}
+
 	client := rpc.NewClient(conn)
 	t.clients[peer] = client
 	return client, nil

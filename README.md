@@ -100,16 +100,27 @@ OS-level firewall/netns rules, since this sandbox has no control over
 those — a real firewall rule would exercise the same code path
 identically (RPCs fail the same way), but hasn't been tried.
 
+**TLS: also closed, in the same pass as the transport swap.**
+`NewTCPTransportTLS` wires v0.10's real cert/handshake machinery
+(`security.GenerateCA`/`IssueServerCert`/`ServerTLSConfig`/
+`ClientTLSConfig`) into `TCPTransport` — Raft now elects and commits over
+a real TLS-secured socket, and a node with a mismatched CA can never
+complete a handshake with the cluster (tested directly, not assumed).
+Doing this surfaced a real bug in v0.10's own cert helper: it only set
+`DNSNames`, so cert verification silently failed for any `ServerName`
+that's a literal IP (`"127.0.0.1"`, what these new tests use) rather than
+a hostname (`"localhost"`, what v0.10's original test happened to use) —
+fixed by setting `IPAddresses` or `DNSNames` based on what the host
+actually is. See `docs/design_real_transport.md` for the full story.
+
 **Everything else here is interface-tested, not integration-tested
 against the real external system:**
-- TLS (v0.10): real cert generation and a real TLS handshake are tested
-  against a real `net/tcp` listener — still not wired into `TCPTransport`
-  (v0.14) itself, which now has real sockets it could secure but doesn't
-  yet. Low-effort now that real sockets exist; tracked as the natural
-  next step, not done here.
 - Tiered storage (v0.9): `ColdStore` is a real interface with real
   upload-then-delete migration logic, tested against a local-directory
-  stand-in — never run against an actual MinIO/S3 endpoint.
+  stand-in — never run against an actual MinIO/S3 endpoint. Attempted as
+  a companion fix alongside the transport/TLS work above, but requires a
+  running Docker daemon, which wasn't available when this was built —
+  left as an explicit, actionable next step, not skipped silently.
 - Stream processing (v0.13): the windowing/aggregation logic is real and
   tested — it's not a Flink or Spark job, by design (see
   `docs/design_stream_processing.md`).

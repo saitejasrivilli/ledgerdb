@@ -83,12 +83,39 @@ numbers agreeing is itself informative (it says the earlier chaos number
 was never really testing transport speed, just consensus timeout
 behavior, regardless of transport).
 
+## TLS, wired in for real (added same version, after initial review)
+`NewTCPTransportTLS` accepts plain `*tls.Config` for both the listener
+and outbound dials, built by v0.10's real cert/handshake machinery
+(`security.GenerateCA`, `IssueServerCert`, `ServerTLSConfig`,
+`ClientTLSConfig`) — `raft` can't import `security` directly (that would
+cycle: `security` → `replication` → `raft`), so the transport takes
+`*tls.Config` instead, which is exactly what those functions already
+return. `TestV0_14_TLSSecuredRaftTrafficWorks` proves Raft elects and
+commits over TLS; `TestV0_14_WrongCARaftPeerCannotJoin` proves a node
+with a mismatched CA can never complete a handshake with the real
+cluster, so it can never contribute a vote or win an election.
+
+**A real cert bug this surfaced:** `security.IssueServerCert` (v0.10)
+only set `DNSNames`, never `IPAddresses`. That's invisible when the
+`ServerName` used for verification is an actual hostname (`"localhost"`,
+what v0.10's own test used) — Go's TLS hostname check consults
+`DNSNames` for that case. But `TCPTransport`'s tests all use
+`"127.0.0.1"` as the address and `ServerName`, a literal IP — and Go's
+verification consults `IPAddresses` for a literal-IP `ServerName`, not
+`DNSNames`, so every handshake silently failed until this was fixed.
+Fixed by setting whichever SAN field actually matches what `net.ParseIP`
+says about the host. v0.10's original localhost-based test was
+unaffected and still passes; this was a real gap in that version's
+coverage that a wider caller (this one, using IPs) exposed.
+
 ## What v0.14 deliberately does NOT do
-- No TLS wired in yet (that's the natural next step now that real
-  sockets exist — tracked as follow-up, not silently implied here)
 - No gRPC (net/rpc is sufficient for what this version needs to prove;
   swapping transports later is what the `Transport` interface is for)
 - No real multi-machine test (loopback TCP on one machine — genuinely
   exercises real sockets/syscalls, but doesn't add real cross-host
   latency; that's a meaningfully different, larger claim this version
   doesn't make)
+- Tiered storage against a real MinIO instance was considered as a
+  companion fix in this same pass but requires a running Docker daemon,
+  which wasn't available in the environment this version was built in —
+  left as an explicit, actionable follow-up rather than skipped silently
