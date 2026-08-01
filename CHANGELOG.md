@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.4 — Replication (Raft + partitions combined)
+
+**Adds:** `replication.ReplicatedPartition` — one Raft group (v0.1,
+unmodified) per partition, with an apply loop bridging committed Raft
+entries into each replica's local `storage.Log` (v0.2, unmodified). Same
+raft index commits in the same order on every replica, so a given logical
+write lands at the same storage offset everywhere — verified by test, not
+assumed.
+
+**Design doc:** `docs/design_replication.md`
+
+**Tests:** `tests/regression/v0_4_replication_test.go`
+- `TestV04_KillFollowerAndRecover` — 2-of-3 quorum keeps committing with a
+  follower down; reconnected follower catches up to the exact same offsets
+- `TestV04_KillLeaderElectNewOne` — new leader elected, keeps accepting
+  writes; old leader rejoins as follower and catches up
+- `TestV04_CommittedWritesSurviveAcrossReplicas` — 10 writes, every
+  replica agrees byte-for-byte at every offset
+
+**Bug caught by `-race`:** `ReplicatedPartition.ReadLocal` /
+`NextLocalOffset` called `storage.Log` directly without synchronizing
+against the apply loop's own `Append` calls — `storage.Log` was never
+meant to be safe for concurrent access (documented in v0.2). Fixed by
+serializing all local log access through the partition's own mutex.
+
+**Breaking check:** full v0.1–v0.3 regression suite re-ran unmodified,
+still green — `go test ./... -race -count=5` clean, 5 consecutive runs.
+
+**Not yet implemented:** no client-facing leader-forwarding/redirection
+(a proposal to a follower is simply rejected) — that's the REST API's
+concern later; no Raft log snapshotting yet (full replay on rejoin).
+
 ## v0.3 — Partitioning
 
 **Adds:** `storage.PartitionedLog` — routes keys across N independent
