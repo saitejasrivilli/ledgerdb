@@ -49,7 +49,9 @@ Every number below traces to a file in `benchmarks/results/`.
 ## Durability
 
 100 kill-and-recover cycles against the document store, zero data loss
-across all of them — `tests/regression/v1_0_durability_test.go`.
+across all of them — `tests/regression/v1_0_durability_test.go`. Last
+re-verified against current HEAD (not just trusted from when it was
+written) on 2026-08-01: `go test ./tests/regression/... -run TestV1_0_HundredKillAndRecoverCyclesNoDataLoss -count=1 -v` — clean.
 
 ## Running the tests
 
