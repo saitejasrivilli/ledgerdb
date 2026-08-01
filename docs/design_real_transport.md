@@ -115,7 +115,9 @@ coverage that a wider caller (this one, using IPs) exposed.
   exercises real sockets/syscalls, but doesn't add real cross-host
   latency; that's a meaningfully different, larger claim this version
   doesn't make)
-- Tiered storage against a real MinIO instance was considered as a
-  companion fix in this same pass but requires a running Docker daemon,
-  which wasn't available in the environment this version was built in —
-  left as an explicit, actionable follow-up rather than skipped silently
+
+Tiered storage against a real MinIO instance — considered a companion
+gap here, but closed separately in v0.14.3 (`storage.MinioColdStore`,
+`tests/integration/minio_test.go`, verified both in CI and locally
+against a real `docker run minio/minio` instance once a Docker daemon
+became available).

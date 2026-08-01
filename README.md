@@ -120,14 +120,17 @@ a hostname (`"localhost"`, what v0.10's original test happened to use) —
 fixed by setting `IPAddresses` or `DNSNames` based on what the host
 actually is. See `docs/design_real_transport.md` for the full story.
 
+**Tiered storage: also closed, against a real MinIO instance.**
+`storage.MinioColdStore` (real `minio-go` client, same `ColdStore`
+interface `LocalDirColdStore` already satisfies) is exercised by
+`tests/integration/minio_test.go` — passing both in CI
+(`.github/workflows/minio-integration.yml`, a real MinIO container) and
+locally against a real `docker run minio/minio` instance, not just the
+local-directory stand-in from v0.9. This is what actually converts the
+v0.9 "interface-tested" claim into "integrated with MinIO" for real.
+
 **Everything else here is interface-tested, not integration-tested
 against the real external system:**
-- Tiered storage (v0.9): `ColdStore` is a real interface with real
-  upload-then-delete migration logic, tested against a local-directory
-  stand-in — never run against an actual MinIO/S3 endpoint. Attempted as
-  a companion fix alongside the transport/TLS work above, but requires a
-  running Docker daemon, which wasn't available when this was built —
-  left as an explicit, actionable next step, not skipped silently.
 - Stream processing (v0.13): the windowing/aggregation logic is real and
   tested — it's not a Flink or Spark job, by design (see
   `docs/design_stream_processing.md`).

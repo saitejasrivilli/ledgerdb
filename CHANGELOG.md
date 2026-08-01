@@ -69,11 +69,34 @@ unaffected.
 — `go test ./... -race -count=5` clean; the partition test run 20x to
 confirm its fix held (see bug note above).
 
-**Not yet implemented, stated honestly:** tiered storage against a real
-MinIO instance was attempted as a companion fix in this same pass but
-needs a running Docker daemon, unavailable in this build environment —
-left as an explicit next step. No real packet loss/reordering test under
-sustained load; no cross-host test (loopback TCP only).
+**Not yet implemented, stated honestly:** no real packet loss/reordering
+test under sustained load; no cross-host test (loopback TCP only).
+
+## v0.14.3 — Real MinIO integration
+
+**Adds:** `storage.MinioColdStore` — a real `minio-go` client
+implementation of the `ColdStore` interface `LocalDirColdStore` (v0.9)
+already satisfies. `tests/integration/minio_test.go` skips locally with
+no `MINIO_ENDPOINT` set, and runs the same `TestV09_ReadFromColdTierAfterMigration`-
+shaped correctness check against a real MinIO bucket otherwise.
+`.github/workflows/minio-integration.yml` starts a real MinIO container
+in CI and runs it there on every push/PR.
+
+**Verified twice:** once in CI (real MinIO container,
+`go test ./tests/integration/... -run TestRealMinIO` green), once locally
+against `docker run minio/minio server /data` on this machine, plus a
+full `go test ./... -race -count=1` with MinIO reachable — all green.
+This converts v0.9's "interface-tested, never run against an actual
+MinIO/S3 endpoint" gap into an actually-closed one, not just a CI-only
+claim.
+
+**CI fix along the way:** the first version of the workflow used
+`bitnami/minio:latest` as a `services:` container, which failed to pull
+(Bitnami's registry access changed recently — a common breakage other
+projects hit too). Switched to the official `minio/minio` image, started
+via `docker run` in a step instead of `services:` (which can't pass
+`server /data` as a command argument — the official image needs that or
+it just prints help and exits).
 
 ## v1.0 — Document store + MVCC
 
