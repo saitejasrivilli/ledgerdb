@@ -1,10 +1,91 @@
 # ledgerdb
 
-A distributed commit log + document store, built version by version —
-each tag (`v0.1` ... `v1.0`) builds on every prior one unmodified, with a
-growing regression suite that must pass in full before the next version
-is tagged. The commit history is the evidence: check out any tag and see
-a working, tested system at that stage.
+**A distributed commit log + document store, built version by version and
+proven against real infrastructure — Raft consensus, real TCP transport,
+real `iptables`/`tc netem` fault injection, real MinIO, with every
+benchmark number traceable to a committed JSON file.**
+
+[![MinIO integration](https://github.com/saitejasrivilli/ledgerdb/actions/workflows/minio-integration.yml/badge.svg)](https://github.com/saitejasrivilli/ledgerdb/actions/workflows/minio-integration.yml)
+[![Network fault injection](https://github.com/saitejasrivilli/ledgerdb/actions/workflows/network-fault.yml/badge.svg)](https://github.com/saitejasrivilli/ledgerdb/actions/workflows/network-fault.yml)
+[![Go Reference](https://img.shields.io/badge/go-1.26-00ADD8?logo=go)](go.mod)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+Each tag (`v0.1` … `v1.0`, `v0.14.x`) builds on every prior one
+unmodified, with a growing regression suite that must pass in full
+before the next version ships. The commit history is the evidence: check
+out any tag and see a working, tested system at that stage.
+
+## Contents
+
+- [Quickstart](#quickstart)
+- [Architecture](#architecture)
+- [What's here, in build order](#whats-here-in-build-order)
+- [Measured, not estimated](#measured-not-estimated)
+- [Durability](#durability)
+- [What this project is honest about not doing](#what-this-project-is-honest-about-not-doing)
+- [License](#license)
+
+## Quickstart
+
+```bash
+git clone https://github.com/saitejasrivilli/ledgerdb.git
+cd ledgerdb
+go build ./...
+go test ./... -race -count=5
+```
+
+Run the benchmarks (each writes real, timestamped output to
+`benchmarks/results/`):
+
+```bash
+go run ./cmd/benchmark              # throughput, latency, chaos recovery (simulated network)
+go run ./cmd/compression_benchmark  # batching + compression ratio
+go run ./cmd/mvcc_benchmark         # MVCC vs. lock-based concurrent reads
+go run ./cmd/transport_benchmark    # chaos recovery over a real TCP transport
+```
+
+Two test suites need infrastructure this repo can't assume you have
+running, so they skip cleanly if it's absent and run for real in CI:
+
+```bash
+# real MinIO (needs a running MinIO instance; see .github/workflows/minio-integration.yml)
+MINIO_ENDPOINT=localhost:9000 go test ./tests/integration/... -v
+
+# real iptables/tc netem fault injection (Linux + root only)
+sudo NETFAULT_TEST=1 go test ./tests/networkfault/... -v
+```
+
+## Architecture
+
+```
+        client
+          │
+          ▼
+  ┌───────────────┐        Raft group (per partition)
+  │  producer.Write│──┐    ┌─────────┐  ┌─────────┐  ┌─────────┐
+  │  (ack 0/1/all) │  └───▶│ leader  │◀▶│follower │◀▶│follower │
+  └───────────────┘        └────┬────┘  └────┬────┘  └────┬────┘
+                                 │            │            │
+                            storage.Log  storage.Log  storage.Log
+                          (segments, WAL) (segments, WAL) (segments, WAL)
+                                 │
+                     ┌───────────┴────────────┐
+                     ▼                        ▼
+              docstore (MVCC)          tiered segments
+              JSON docs + index          → real MinIO
+```
+
+Raft (`raft/`) owns commit ordering and runs over a real TCP transport
+(`raft/tcp_transport.go`) behind a `Transport` interface — the same
+interface an in-process simulated network (`raft/network.go`) also
+satisfies, which is what every version's regression suite runs against
+for speed and determinism. `storage.Log` (`storage/`) is the durable,
+segment-based WAL every replica applies committed entries into.
+`replication.ReplicatedPartition` bridges the two. Everything above that
+— partitioning, consumer groups, ack levels, batching/compression,
+tiered storage, security, observability, schema validation, stream
+processing, and the MVCC document store — is a version-by-version layer
+on top, each with its own design doc.
 
 ## What's here, in build order
 
@@ -24,7 +105,8 @@ a working, tested system at that stage.
 | v0.12 | Schema validation | [docs/design_schema_evolution.md](docs/design_schema_evolution.md) |
 | v0.13 | Stream processing (tumbling windows) | [docs/design_stream_processing.md](docs/design_stream_processing.md) |
 | v1.0 | Document store + MVCC | [docs/design_document_store.md](docs/design_document_store.md), [docs/design_mvcc.md](docs/design_mvcc.md) |
-| v0.14 | Real network transport (TCP, replaces the in-process simulation for a real partition test) | [docs/design_real_transport.md](docs/design_real_transport.md) |
+| v0.14 | Real network transport (TCP, real partition test) | [docs/design_real_transport.md](docs/design_real_transport.md) |
+| v0.14.4 | Real `iptables`/`tc netem` fault injection | [docs/design_network_fault.md](docs/design_network_fault.md) |
 
 See [CHANGELOG.md](CHANGELOG.md) for what shipped, what tests cover it,
 and what bugs were caught and fixed along the way, per version.
@@ -39,15 +121,23 @@ Every number below traces to a file in `benchmarks/results/`.
   network at the time it was measured.
 - **Chaos recovery, real TCP transport** (`v0.14_transport.json`, 5
   runs): detection ~321–373ms, recovery ~325–379ms — re-measured over
-  real sockets (see v0.14 below). Lands in the same range as the
-  simulated number, because election-timeout duration (300–600ms, not
-  transport speed) dominates both measurements — informative in itself,
-  not a coincidence to wave away.
+  real sockets. Lands in the same range as the simulated number, because
+  election-timeout duration (300–600ms, not transport speed) dominates
+  both measurements — informative in itself, not a coincidence to wave
+  away.
+- **Real iptables DROP vs. app-level BlockPeer**
+  (`v0.14.4_iptables_vs_blockpeer.json`, 10 runs): detection ~346–458ms,
+  recovery ~358–469ms — close enough to the numbers above that the
+  theoretical DROP-vs-REJECT timing concern doesn't dominate in practice
+  here. Getting this clean measurement surfaced two real, independent
+  bugs (a Raft election-timer redraw bug and a per-peer transport
+  locking bug) that no earlier test had ever triggered — see
+  [docs/design_network_fault.md](docs/design_network_fault.md).
 - **Real network partition** (`docs/design_real_transport.md`,
-  `TestRealNetworkPartitionOnlyMajoritySideCommits`): a genuine bidirectional
-  TCP partition, not a process kill — the majority side elects and
-  commits, the isolated side never applies the write, and rejoins cleanly
-  once healed.
+  `TestRealNetworkPartitionOnlyMajoritySideCommits`): a genuine
+  bidirectional TCP partition, not a process kill — the majority side
+  elects and commits, the isolated side never applies the write, and
+  rejoins cleanly once healed.
 - **Compression** (`v0.8_compression.json`): ~6.9x gzip ratio on 1000
   log-line messages with realistic per-line variation (varying paths,
   latencies, UUIDs, occasional free-text errors). An earlier corpus with
@@ -56,30 +146,14 @@ Every number below traces to a file in `benchmarks/results/`.
 - **MVCC vs. lock-based reads** (`v1.0_mvcc.json`): measured honestly —
   MVCC was *slower* (~0.58x) on a single-hot-document, low-contention
   workload; see [docs/design_mvcc.md](docs/design_mvcc.md) for why, and
-  why the number wasn't reshaped to look better
+  why the number wasn't reshaped to look better.
 
 ## Durability
 
 100 kill-and-recover cycles against the document store, zero data loss
 across all of them — `tests/regression/v1_0_durability_test.go`. Last
 re-verified against current HEAD (not just trusted from when it was
-written) on 2026-08-01: `go test ./tests/regression/... -run TestV1_0_HundredKillAndRecoverCyclesNoDataLoss -count=1 -v` — clean.
-
-## Running the tests
-
-```
-go build ./...
-go test ./... -race -count=5
-```
-
-## Running the benchmarks
-
-```
-go run ./cmd/benchmark              # throughput, latency, chaos recovery (simulated network)
-go run ./cmd/compression_benchmark  # batching + compression ratio
-go run ./cmd/mvcc_benchmark         # MVCC vs. lock-based concurrent reads
-go run ./cmd/transport_benchmark    # chaos recovery over a real TCP transport
-```
+written) on 2026-08-01.
 
 ## What this project is honest about not doing
 
@@ -96,9 +170,7 @@ kernel-level packet drop, or just assumed to be? Measured directly with
 real `iptables DROP` + `tc netem` loss/reordering
 (`tests/networkfault/`, CI: `.github/workflows/network-fault.yml`,
 local: `scripts/run_network_fault_tests.sh`) — the answer: yes, close
-enough (`iptables DROP` measured ~346–458ms detection/~358–469ms
-recovery vs. `BlockPeer`'s ~321–373ms/~325–379ms, both dominated by
-Raft's own 300–600ms election timeout, not transport failure mode).
+enough (see the numbers above).
 
 **Getting that clean measurement surfaced two real, pre-existing bugs**
 that no earlier test — simulated or `BlockPeer`-based — had ever
@@ -147,3 +219,7 @@ handshake + ACL enforcement" is accurate; "TLS-secured broker
 communication" is not, since no broker communication is on a real socket
 yet. Same pattern for "designed and tested against a MinIO-compatible
 interface" vs. "integrated with MinIO."
+
+## License
+
+[MIT](LICENSE)
