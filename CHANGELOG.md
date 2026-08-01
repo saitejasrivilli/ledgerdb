@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.3 — Partitioning
+
+**Adds:** `storage.PartitionedLog` — routes keys across N independent
+`storage.Log` instances (FNV-1a hash mod N), each with its own segment
+directory and offset space. Pure routing layer, no changes to the v0.2
+segment format.
+
+**Design doc:** `docs/design_partitioning.md`
+
+**Tests:** `tests/regression/v0_3_partitioning_test.go`
+- `TestV03_PartitionIsolation` — same key always routes to same partition
+- `TestV03_IndependentOffsetSpaces` — writing to one partition never
+  advances another's offset counter
+- `TestV03_ReadBackByPartitionAndOffset` — round-trip correctness across
+  all partitions
+
+**Breaking check:** full v0.1–v0.2 regression suite re-ran unmodified,
+still green — `go test ./... -race -count=5` clean.
+
+**Not yet implemented:** no replication (each partition lives on one
+process only) — lands v0.4.
+
 ## v0.2 — Single-partition append-only log
 
 **Adds:** Segment-based storage layer (`storage/`) — fixed-size segment
