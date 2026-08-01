@@ -1,5 +1,49 @@
 # Changelog
 
+## v0.15 — MongoDB wire protocol translation
+
+**Adds:** `mongowire/` — a TCP server speaking a deliberately small
+subset of the real MongoDB wire protocol (message framing + BSON via
+`go.mongodb.org/mongo-driver/v2/bson`), translating commands into calls
+against the existing, unmodified `docstore` (v1.0). This is the concrete
+mechanism behind DocumentDB's actual JD keyword match — a
+wire-protocol-compatible frontend over a different storage engine — more
+directly than MVCC alone. One collection per `docstore.ReplicatedDocStore`,
+no db/collection namespacing; supports `hello`/`isMaster`, `ping`,
+`insert`, `find` (`_id`-equality or full scan), `update` (`$set` only),
+`delete`.
+
+**Design doc:** `docs/design_wire_protocol.md`
+
+**Tests:** `tests/regression/v0_15_wire_protocol_test.go` —
+`TestWireProtocol_InsertFindUpdateDelete` drives the full command cycle
+using the REAL official `go.mongodb.org/mongo-driver/v2/mongo` client
+against a locally running server, not a hand-rolled test client.
+
+**Four real bugs found using the real driver, none of which a
+hand-rolled test client would have caught:**
+1. The driver's first message on any connection is a legacy OP_QUERY
+   handshake, not OP_MSG — a server that only understood OP_MSG could
+   never get past it. Fixed by handling OP_QUERY/OP_REPLY for that one
+   path.
+2. Nested BSON sub-documents decode as `bson.D`, not `bson.M`, even when
+   the top-level document was unmarshaled into `bson.M` — every filter
+   and update silently looked empty until traced down. Fixed with a
+   `toM` conversion helper at every nested access point.
+3. `cursor.ns` must be `"db.collection"`, not a bare collection name.
+4. An empty result set must be an empty BSON array, not `null` (a nil Go
+   slice's default encoding) — the driver rejects `null` for
+   `cursor.firstBatch`.
+
+**Breaking check:** full regression suite re-ran, still green — `go test
+./... -race -count=3` clean; the new wire-protocol test itself run 10x
+clean.
+
+**Not yet implemented:** no database/collection namespacing, no
+aggregation pipeline, no authentication (SCRAM) — connections are
+unauthenticated, matching this project's existing security scope
+boundary honestly rather than implying more coverage than exists.
+
 ## v0.14.4 — Real packet loss/reordering + iptables-vs-BlockPeer comparison
 
 **Adds:** `tests/networkfault/` — real kernel-level fault injection

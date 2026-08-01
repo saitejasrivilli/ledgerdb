@@ -107,6 +107,7 @@ on top, each with its own design doc.
 | v1.0 | Document store + MVCC | [docs/design_document_store.md](docs/design_document_store.md), [docs/design_mvcc.md](docs/design_mvcc.md) |
 | v0.14 | Real network transport (TCP, real partition test) | [docs/design_real_transport.md](docs/design_real_transport.md) |
 | v0.14.4 | Real `iptables`/`tc netem` fault injection | [docs/design_network_fault.md](docs/design_network_fault.md) |
+| v0.15 | MongoDB wire protocol translation | [docs/design_wire_protocol.md](docs/design_wire_protocol.md) |
 
 See [CHANGELOG.md](CHANGELOG.md) for what shipped, what tests cover it,
 and what bugs were caught and fixed along the way, per version.
@@ -212,6 +213,17 @@ interface `LocalDirColdStore` already satisfies) is exercised by
 locally against a real `docker run minio/minio` instance, not just the
 local-directory stand-in from v0.9. This is what actually converts the
 v0.9 "interface-tested" claim into "integrated with MinIO" for real.
+
+**MongoDB wire protocol: also closed, against the real official driver.**
+`mongowire/` (v0.15) translates a deliberately small command subset
+(`insert`/`find`/`update`/`delete`) into calls against `docstore` —
+tested with `go.mongodb.org/mongo-driver/v2/mongo`, the real official
+client, not a hand-rolled test client that only exercises what the
+server-side code expects. That distinction mattered: the real driver's
+legacy OP_QUERY handshake, `bson.D`-vs-`bson.M` nested decoding, the
+required `cursor.ns` format, and BSON's `null`-vs-empty-array distinction
+all surfaced as real bugs a hand-rolled client would have sailed past.
+See `docs/design_wire_protocol.md`.
 
 **Everything else here is interface-tested, not integration-tested
 against the real external system:**

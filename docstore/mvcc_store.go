@@ -180,3 +180,25 @@ func (sn *Snapshot) QueryByIndex(value string) []string {
 	}
 	return result
 }
+
+// Scan returns every document ID that exists (not deleted) as of this
+// snapshot — a full collection scan. Added in v0.15 for the wire
+// protocol's empty-filter `find` case; no prior version needed a
+// "get everything" primitive since every existing test/caller already
+// knows the ID or indexed field it wants.
+func (sn *Snapshot) Scan() []string {
+	sn.store.mu.RLock()
+	ids := make([]string, 0, len(sn.store.chains))
+	for id := range sn.store.chains {
+		ids = append(ids, id)
+	}
+	sn.store.mu.RUnlock()
+
+	var result []string
+	for _, id := range ids {
+		if _, ok := sn.Get(id); ok {
+			result = append(result, id)
+		}
+	}
+	return result
+}
