@@ -172,16 +172,22 @@ real `iptables DROP` + `tc netem` loss/reordering
 local: `scripts/run_network_fault_tests.sh`) — the answer: yes, close
 enough (see the numbers above).
 
-**Getting that clean measurement surfaced two real, pre-existing bugs**
-that no earlier test — simulated or `BlockPeer`-based — had ever
-triggered: (1) `raft.go`'s election timer redrew its random timeout on
-every 10ms poll tick instead of once per reset, letting two nodes
-converge on firing in the same window repeatedly (observed: 14+ seconds
-of lockstep term climbing, unresolved); (2) `TCPTransport.getClient` held
-one mutex across every peer for the full dial duration, so a real
-isolated peer's repeated redial attempts (every 50ms) starved heartbeats
-to the *other, reachable* peer for up to 500ms each time. Both fixed;
-see `docs/design_network_fault.md` and `docs/design_raft.md`'s addendum
+**The finding that matters most here isn't about distributed systems —
+it's about testing.** The simulated-network suite, the app-level
+`BlockPeer` partition test, and the "genuine" TCP partition test all
+passed cleanly, every time, while two real bugs sat undetected
+underneath. Only forcing a real kernel-level fault surfaced them: (1)
+`raft.go`'s election timer redrew its random timeout on every 10ms poll
+tick instead of once per reset, which (before the fix) let two nodes
+converge on firing in the same window repeatedly — observed directly as
+14+ seconds of lockstep term climbing that never resolved on its own;
+(2) `TCPTransport.getClient` held one mutex across every peer for the
+full dial duration, so a real isolated peer's repeated redial attempts
+(every 50ms) starved heartbeats to the *other, reachable* peer for up to
+500ms each time. **Both are fixed** — verified 10x/5x clean afterward,
+in CI and locally — but the fixes only happened because a deeper layer
+of testing was forced; every prior, passing layer had given false
+confidence. See `docs/design_network_fault.md` and `docs/design_raft.md`'s addendum
 for the full story — real infrastructure found real bugs a good-enough
 simulation had been quietly hiding.
 
