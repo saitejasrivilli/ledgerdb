@@ -1,0 +1,9 @@
+{
+  "generated_at": "2026-08-01T20:34:07Z",
+  "iptables_drop": {
+    "method": "real iptables DROP (INPUT -s \u003cip\u003e DROP, OUTPUT -d \u003cip\u003e DROP)",
+    "detection_ms": 457.638,
+    "recovery_ms": 468.718
+  },
+  "note": "compare against benchmarks/results/v0.14_transport.json's BlockPeer-based numbers (~321-373ms detection, ~325-379ms recovery, 5 runs) — see docs/design_network_fault.md"
+}

@@ -56,16 +56,30 @@ func (s *rpcService) AppendEntries(args *AppendEntriesArgs, reply *AppendEntries
 // that the in-process simTransport can't: real packet loss, real
 // timeouts, and a real network partition (a client that literally cannot
 // open a connection to a peer, not a simulated "disconnected" flag).
+// peerConn holds one peer's cached client behind its OWN mutex — see the
+// bug note on TCPTransport.getClient for why a single shared mutex
+// across all peers was a real, serious bug, not just an inefficiency.
+type peerConn struct {
+	mu     sync.Mutex
+	client *rpc.Client
+}
+
 type TCPTransport struct {
 	me        int
 	addrs     map[int]string
 	timeout   time.Duration
 	listener  net.Listener
-	clientTLS *tls.Config // nil means plain TCP dial
+	clientTLS *tls.Config  // nil means plain TCP dial
+	localAddr *net.TCPAddr // this node's own IP, used as outbound dial source
 
-	mu      sync.Mutex
-	clients map[int]*rpc.Client
-	blocked map[int]bool
+	// peers is populated once, for every ID in addrs, at construction
+	// time — before any goroutine can read it — so the map itself is
+	// never mutated afterward and needs no lock for concurrent reads.
+	// Only each entry's own mu protects that one peer's client field.
+	peers map[int]*peerConn
+
+	blockedMu sync.Mutex
+	blocked   map[int]bool
 }
 
 // NewTCPTransport starts listening on addrs[me] over plain TCP and
@@ -116,13 +130,35 @@ func newTCPTransport(me int, addrs map[int]string, serverTLSConfig, clientTLSCon
 		}
 	}()
 
+	// Bind outbound dials to this node's own listening IP. Without this,
+	// on a host with multiple loopback addresses (127.0.0.1, .2, .3 —
+	// used to give each node in a single-machine test its own IP so
+	// per-node iptables rules are possible, see
+	// docs/design_network_fault.md) the kernel picks a default source
+	// address for outbound connections that may not match the address
+	// this node is actually listening on, which silently breaks any
+	// address-based firewall rule meant to isolate this node's outbound
+	// traffic too, not just inbound.
+	var localAddr *net.TCPAddr
+	if host, _, err := net.SplitHostPort(addrs[me]); err == nil {
+		if ip := net.ParseIP(host); ip != nil {
+			localAddr = &net.TCPAddr{IP: ip}
+		}
+	}
+
+	peers := make(map[int]*peerConn, len(addrs))
+	for id := range addrs {
+		peers[id] = &peerConn{}
+	}
+
 	t := &TCPTransport{
 		me:        me,
 		addrs:     addrs,
 		timeout:   500 * time.Millisecond,
 		listener:  listener,
 		clientTLS: clientTLSConfig,
-		clients:   make(map[int]*rpc.Client),
+		localAddr: localAddr,
+		peers:     peers,
 		blocked:   make(map[int]bool),
 	}
 	return t, svc, nil
@@ -146,18 +182,15 @@ func newTCPTransport(me int, addrs map[int]string, serverTLSConfig, clientTLSCon
 // simulated Network — but the silent-packet-loss case specifically has
 // not been tested against real iptables/tc netem rules.
 func (t *TCPTransport) BlockPeer(peer int) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.blockedMu.Lock()
 	t.blocked[peer] = true
-	if c, ok := t.clients[peer]; ok {
-		c.Close()
-		delete(t.clients, peer)
-	}
+	t.blockedMu.Unlock()
+	t.dropClient(peer)
 }
 
 func (t *TCPTransport) UnblockPeer(peer int) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.blockedMu.Lock()
+	defer t.blockedMu.Unlock()
 	delete(t.blocked, peer)
 }
 
@@ -167,46 +200,61 @@ func (t *TCPTransport) Addr() string {
 	return t.listener.Addr().String()
 }
 
+// getClient returns peer's cached client, dialing fresh if needed. Locks
+// only that ONE peer's own mutex — a slow or hanging dial to peer A
+// (e.g. an unreachable node, taking up to t.timeout to fail) must never
+// block a concurrent call to peer B. An earlier version of this method
+// used one mutex shared across every peer, held for the full dial
+// duration: with a node isolated by a real firewall rule, that node's
+// connection gets dropped and redialed on every failed RPC (every
+// heartbeat, every 50ms), and each redial attempt held the SINGLE shared
+// lock for up to 500ms — starving heartbeats and vote RPCs to the
+// perfectly-reachable OTHER peer for that same window, again and again.
+// That produced real, repeated spurious elections and leadership
+// instability under real packet loss/partitions — found via
+// tests/networkfault, not simulated. See docs/design_network_fault.md.
 func (t *TCPTransport) getClient(peer int) (*rpc.Client, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if c, ok := t.clients[peer]; ok {
-		return c, nil
+	pc := t.peers[peer]
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+
+	if pc.client != nil {
+		return pc.client, nil
 	}
 
+	dialer := &net.Dialer{Timeout: t.timeout, LocalAddr: t.localAddr}
 	var conn net.Conn
 	var err error
 	if t.clientTLS != nil {
-		dialer := &net.Dialer{Timeout: t.timeout}
 		conn, err = tls.DialWithDialer(dialer, "tcp", t.addrs[peer], t.clientTLS)
 	} else {
-		conn, err = net.DialTimeout("tcp", t.addrs[peer], t.timeout)
+		conn, err = dialer.Dial("tcp", t.addrs[peer])
 	}
 	if err != nil {
 		return nil, err
 	}
 
-	client := rpc.NewClient(conn)
-	t.clients[peer] = client
-	return client, nil
+	pc.client = rpc.NewClient(conn)
+	return pc.client, nil
 }
 
 // dropClient discards a cached client after a failure, so the next call
 // attempts a fresh dial — this is what makes a real partition and a real
 // process-kill look the same to the caller: RPCs just stop succeeding.
 func (t *TCPTransport) dropClient(peer int) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if c, ok := t.clients[peer]; ok {
-		c.Close()
-		delete(t.clients, peer)
+	pc := t.peers[peer]
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+	if pc.client != nil {
+		pc.client.Close()
+		pc.client = nil
 	}
 }
 
 func (t *TCPTransport) call(peer int, method string, args, reply interface{}) bool {
-	t.mu.Lock()
+	t.blockedMu.Lock()
 	blocked := t.blocked[peer]
-	t.mu.Unlock()
+	t.blockedMu.Unlock()
 	if blocked {
 		return false
 	}
@@ -244,10 +292,12 @@ func (t *TCPTransport) SendAppendEntries(peer int, args *AppendEntriesArgs) (*Ap
 }
 
 func (t *TCPTransport) Close() error {
-	t.mu.Lock()
-	for _, c := range t.clients {
-		c.Close()
+	for _, pc := range t.peers {
+		pc.mu.Lock()
+		if pc.client != nil {
+			pc.client.Close()
+		}
+		pc.mu.Unlock()
 	}
-	t.mu.Unlock()
 	return t.listener.Close()
 }

@@ -59,8 +59,21 @@ type Raft struct {
 	nextIndex  map[int]int
 	matchIndex map[int]int
 
-	electionResetAt time.Time
-	killed          bool
+	// electionDeadline is drawn ONCE per reset (see resetElectionTimer)
+	// and compared against directly — it must NOT be a timeout duration
+	// redrawn on every poll tick. Redrawing on every tick was a real bug
+	// found in v0.14.5: once elapsed time exceeds the random range's
+	// upper bound, every subsequent poll is guaranteed to fire (since
+	// even the maximum possible fresh draw is <= elapsed by then),
+	// collapsing the randomization to a near-deterministic ceiling and
+	// letting two nodes reset at nearly the same moment converge on
+	// firing within the same 10ms tick repeatedly — a persistent,
+	// non-random split vote, not the rare tie randomization is supposed
+	// to make unlikely. See docs/design_network_fault.md for how a real
+	// TCP transport's timing exposed this where the simulated network
+	// never did.
+	electionDeadline time.Time
+	killed           bool
 }
 
 // Make builds a Raft peer using the in-process simulated Network (v0.1) —
@@ -121,23 +134,28 @@ func randElectionTimeout() time.Duration {
 	return electionTimeoutMin + time.Duration(rand.Int63n(int64(span)))
 }
 
+// resetElectionTimer draws a fresh random deadline ONCE — must be called
+// with rf.mu held. Every reset (heartbeat/vote/becoming candidate) gets
+// its own independent random draw, which is what makes two nodes'
+// election timing actually diverge over successive rounds instead of
+// converging on the range's ceiling (see the bug note on
+// electionDeadline above).
 func (rf *Raft) resetElectionTimer() {
-	rf.electionResetAt = time.Now()
+	rf.electionDeadline = time.Now().Add(randElectionTimeout())
 }
 
 // electionTicker fires elections when no heartbeat/vote reset the timer
 // within a randomized timeout, per Figure 2's election timeout mechanism.
 func (rf *Raft) electionTicker() {
 	for !rf.isKilled() {
-		timeout := randElectionTimeout()
 		time.Sleep(10 * time.Millisecond)
 
 		rf.mu.Lock()
-		elapsed := time.Since(rf.electionResetAt)
+		expired := time.Now().After(rf.electionDeadline)
 		isLeader := rf.state == leader
 		rf.mu.Unlock()
 
-		if !isLeader && elapsed >= timeout {
+		if !isLeader && expired {
 			rf.startElection()
 		}
 	}

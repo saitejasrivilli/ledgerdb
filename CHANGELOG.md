@@ -1,5 +1,62 @@
 # Changelog
 
+## v0.14.4 — Real packet loss/reordering + iptables-vs-BlockPeer comparison
+
+**Adds:** `tests/networkfault/` — real kernel-level fault injection
+against a real `TCPTransport` cluster. `TestRealIptablesDropVsBlockPeer`
+measures leader-kill detection/recovery using an actual `iptables DROP`
+rule instead of the app-level `BlockPeer`, writing the result to
+`benchmarks/results/v0.14.4_iptables_vs_blockpeer.json` for direct
+comparison against `v0.14_transport.json`. `TestRealTCNetemLossAndReorder`
+applies real `tc netem` packet loss + reordering and drives writes
+through the degraded link. Linux/root-only, gated by `NETFAULT_TEST=1`
+(same pattern as `MINIO_ENDPOINT`) — runs natively in CI on
+`ubuntu-latest` (`.github/workflows/network-fault.yml`) and locally via a
+privileged Docker container (`scripts/run_network_fault_tests.sh`).
+
+**Design doc:** `docs/design_network_fault.md`
+
+**The actual answer, measured:** `iptables DROP` — detection ~346–458ms,
+recovery ~358–469ms (10 runs). `BlockPeer` — ~321–373ms/~325–379ms
+(from v0.14_transport.json). Close enough that the theoretical
+DROP-vs-REJECT timing concern doesn't dominate in practice here: Raft's
+own 300–600ms election timeout bounds both measurements regardless of
+how the transport actually fails underneath.
+
+**Two real, independent, pre-existing bugs found and fixed getting a
+clean measurement** — neither the simulated `Network` (v0.1) nor v0.14's
+own `BlockPeer` had ever triggered either one:
+
+1. **`raft.go`'s `electionTicker` redrew its random timeout on every
+   10ms poll tick** instead of once per reset. Once elapsed time exceeds
+   the range's upper bound (600ms), every redraw is guaranteed `<=`
+   elapsed, collapsing the randomization to a near-deterministic
+   ceiling — two nodes reset around the same moment then converge on
+   firing in the same window repeatedly. Observed directly: two survivor
+   nodes climbing terms in lockstep (3,3 → 6,6 → … → 39,38) for 14+
+   seconds without resolving. Fixed by drawing the deadline once at
+   reset time (`electionDeadline time.Time`) instead of re-deriving a
+   duration every tick. See `docs/design_raft.md`'s addendum.
+
+2. **`TCPTransport.getClient` held one mutex shared across every peer**
+   for the full dial duration. A real isolated peer's connection gets
+   redialed on every failed heartbeat (every 50ms), and each redial held
+   that single lock for up to the full 500ms timeout — starving
+   `getClient` calls to the OTHER, perfectly-reachable peer for that same
+   window, repeatedly. Fixed with a per-peer `peerConn` (its own mutex),
+   populated once at construction. See `docs/design_real_transport.md`'s
+   addendum.
+
+Both bugs needed real, consistent-latency TCP round-trips and a real
+(slow-to-fail) dial to manifest reliably — the in-process simulation and
+the instant-fail `BlockPeer` design structurally couldn't trigger them.
+
+**Breaking check:** full v0.1–v0.14.3 regression suite re-ran, still
+green — `go test ./... -race -count=3` clean, both in a privileged Linux
+Docker container and on this project's default macOS dev machine. The
+new network-fault tests themselves run 10x (iptables) and 5x (netem)
+clean after the fixes.
+
 ## v0.14 — Real network transport
 
 **Adds:** `raft/transport.go` — a `Transport` interface (`SendRequestVote`/

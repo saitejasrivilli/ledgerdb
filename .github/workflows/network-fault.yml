@@ -1,0 +1,34 @@
+name: Network fault injection (real iptables/tc)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  network-fault:
+    # ubuntu-latest is a real Linux VM (not a container) with root and
+    # working iptables/tc — no privileged Docker container needed here,
+    # unlike running this locally on macOS (see
+    # scripts/run_network_fault_tests.sh for that path).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Run real network-fault tests (root, real iptables/tc)
+        env:
+          NETFAULT_TEST: "1"
+        run: sudo -E env "PATH=$PATH" go test ./tests/networkfault/... -v -count=1
+
+      - name: Upload iptables-vs-BlockPeer comparison
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iptables-vs-blockpeer-comparison
+          path: benchmarks/results/v0.14.4_iptables_vs_blockpeer.json
+          if-no-files-found: ignore

@@ -71,6 +71,24 @@ election, giving the new leader something in its own term to commit,
 which pulls everything before it along. See `v0.6` changelog entry for
 the test that caught this (`TestV06_AckAllSurvivesLeaderCrash`).
 
+## Addendum (found during v0.14's network-fault testing): election timer must be drawn once per reset, not redrawn every poll tick
+`electionTicker` originally called `randElectionTimeout()` fresh on every
+10ms poll iteration, comparing it against the actual elapsed time since
+the last reset. Once elapsed time exceeds the range's upper bound
+(600ms), every subsequent redraw is guaranteed `<=` elapsed, collapsing
+the intended randomization to a near-deterministic ceiling — two nodes
+reset around the same moment then converge on firing within the same
+10ms window repeatedly, a persistent split vote rather than the rare
+one-off case randomization is meant to make unlikely. Observed directly
+under a real TCP transport with a real partition: two survivor nodes
+climbed terms in lockstep (3,3 → 6,6 → … → 39,38) for 14+ seconds without
+resolving. Fixed by drawing the random deadline once at reset time
+(`electionDeadline time.Time`) and comparing directly against it, rather
+than re-deriving a fresh timeout duration on every tick. Invisible under
+the simulated `Network` and even v0.14's app-level `BlockPeer` — needed
+real, consistent-latency TCP round-trips to manifest reliably enough to
+notice. See `docs/design_network_fault.md` for the full investigation.
+
 ## Deliberate non-goals for v0.1
 - Cluster membership changes (add/remove nodes) — out of scope until
   explicitly revisited, not needed until real deployment tooling exists

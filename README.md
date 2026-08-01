@@ -86,26 +86,32 @@ go run ./cmd/transport_benchmark    # chaos recovery over a real TCP transport
 Every design doc includes an explicit "what this version deliberately
 does NOT do" section — gaps are stated, not hidden.
 
-**Real network transport: closed as of v0.14, partially.** Through v1.0,
-Raft/replication ran only over an in-process simulated network
-(`raft/network.go`). v0.14 adds a real TCP transport
-(`raft/tcp_transport.go`, real `net.Listen`/`net.Dial`, real `net/rpc`)
-behind the same `Transport` interface, plus a genuine bidirectional
-network-partition test — not a process kill, an actual pair of nodes each
-unable to reach the other over real sockets, confirming only the
-majority side commits. What's still not covered: real packet
-loss/reordering under sustained load, and partitioning is done via an
-application-level connection block (`TCPTransport.BlockPeer`) rather than
-OS-level firewall/netns rules, since this sandbox has no control over
-those. **The claim that this behaves like a real partition is assumed,
-not verified** — an app-level block fails a call immediately (closer to
-a TCP RST/REJECT), while a real `iptables DROP` typically causes packets
-to vanish silently, leaving the sender waiting out a full TCP timeout
-before it even learns the connection failed. Those are different timing
-profiles, and timing is exactly what the chaos-recovery numbers measure.
-The honest answer to "did you test the silent-packet-loss case" is no,
-not yet — this hasn't been checked against real `iptables`/`tc netem`
-rules, which don't need Docker, just a Linux box with netns/root access.
+**Real network transport: fully closed.** Through v1.0, Raft/replication
+ran only over an in-process simulated network (`raft/network.go`). v0.14
+adds a real TCP transport (`raft/tcp_transport.go`) behind the same
+`Transport` interface, plus a genuine bidirectional network-partition
+test over real sockets. v0.14.4 then closed the one remaining open
+question: is an app-level `BlockPeer` actually equivalent to a real
+kernel-level packet drop, or just assumed to be? Measured directly with
+real `iptables DROP` + `tc netem` loss/reordering
+(`tests/networkfault/`, CI: `.github/workflows/network-fault.yml`,
+local: `scripts/run_network_fault_tests.sh`) — the answer: yes, close
+enough (`iptables DROP` measured ~346–458ms detection/~358–469ms
+recovery vs. `BlockPeer`'s ~321–373ms/~325–379ms, both dominated by
+Raft's own 300–600ms election timeout, not transport failure mode).
+
+**Getting that clean measurement surfaced two real, pre-existing bugs**
+that no earlier test — simulated or `BlockPeer`-based — had ever
+triggered: (1) `raft.go`'s election timer redrew its random timeout on
+every 10ms poll tick instead of once per reset, letting two nodes
+converge on firing in the same window repeatedly (observed: 14+ seconds
+of lockstep term climbing, unresolved); (2) `TCPTransport.getClient` held
+one mutex across every peer for the full dial duration, so a real
+isolated peer's repeated redial attempts (every 50ms) starved heartbeats
+to the *other, reachable* peer for up to 500ms each time. Both fixed;
+see `docs/design_network_fault.md` and `docs/design_raft.md`'s addendum
+for the full story — real infrastructure found real bugs a good-enough
+simulation had been quietly hiding.
 
 **TLS: also closed, in the same pass as the transport swap.**
 `NewTCPTransportTLS` wires v0.10's real cert/handshake machinery

@@ -108,6 +108,25 @@ says about the host. v0.10's original localhost-based test was
 unaffected and still passes; this was a real gap in that version's
 coverage that a wider caller (this one, using IPs) exposed.
 
+## Addendum (found during v0.14.4's network-fault testing): per-peer connection locking
+`TCPTransport.getClient` originally held a single mutex shared across
+every peer for the full duration of a dial attempt. Under a real
+isolation/partition, the isolated peer's connection gets dropped and
+redialed on every failed heartbeat (every 50ms), and each redial held
+that one shared lock for up to the full 500ms dial timeout — blocking
+`getClient` calls to the OTHER, perfectly-reachable peer for that same
+window, repeatedly. This alone was enough to cause real, repeated
+spurious elections and leadership instability that had nothing to do
+with the election-timer bug above (`docs/design_raft.md`'s addendum) —
+two independent bugs producing the same symptom. Fixed with a per-peer
+`peerConn` struct (its own mutex), populated once at construction so the
+outer map needs no synchronization afterward; a slow dial to one peer
+can no longer block traffic to any other. See
+`docs/design_network_fault.md` for the full investigation and how a real
+transport with real dial latency was needed to expose this — the
+simulated `Network` and even this version's own `BlockPeer` (fails
+instantly, no real dial delay) could not have triggered it.
+
 ## What v0.14 deliberately does NOT do
 - No gRPC (net/rpc is sufficient for what this version needs to prove;
   swapping transports later is what the `Transport` interface is for)
