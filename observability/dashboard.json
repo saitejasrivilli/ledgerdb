@@ -1,0 +1,45 @@
+{
+  "title": "ledgerdb overview",
+  "schemaVersion": 39,
+  "panels": [
+    {
+      "title": "Write throughput (ops/sec by ack level)",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "sum by (ack_level) (rate(ledgerdb_writes_total[1m]))" }
+      ]
+    },
+    {
+      "title": "Write latency p99 (by ack level)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, ack_level) (rate(ledgerdb_write_latency_seconds_bucket[5m])))"
+        }
+      ]
+    },
+    {
+      "title": "Raft leader status (should sum to 1 per partition)",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "ledgerdb_raft_is_leader" }
+      ]
+    },
+    {
+      "title": "Consumer lag",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "ledgerdb_consumer_lag" }
+      ]
+    },
+    {
+      "title": "Write error rate",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(ledgerdb_writes_total{result=\"failure\"}[1m])) / sum(rate(ledgerdb_writes_total[1m]))"
+        }
+      ]
+    }
+  ]
+}

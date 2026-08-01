@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.11 — Observability
+
+**Adds:** `metrics/` Prometheus instrumentation — `ledgerdb_writes_total`
+(by ack level + result), `ledgerdb_write_latency_seconds` (histogram, by
+ack level), `ledgerdb_raft_is_leader` (gauge, by node), and
+`ledgerdb_consumer_lag` (gauge, by group/consumer). Wraps existing types
+(`producer.Write`, `ReplicatedPartition.GetState`) rather than modifying
+them, same composition pattern used throughout this project.
+`observability/dashboard.json` — a real Grafana dashboard definition
+referencing all four metrics, checked into the repo.
+
+**Design doc:** `docs/design_observability.md`
+
+**Tests:** `tests/regression/v0_11_observability_test.go` —
+`TestV11_MetricsEndpointReturnsExpectedFields` drives real writes/reads
+through the instrumented wrappers, scrapes the Prometheus handler, and
+confirms all four metric names and their expected labels appear (not
+just zero-initialized placeholders).
+
+**Breaking check:** full v0.1–v0.10 regression suite re-ran, still green
+— `go test ./... -race -count=5` clean.
+
+**Not yet implemented:** no alerting rules, no distributed tracing —
+both stated as separate observability axes out of this version's scope.
+
 ## v0.10 — Security: TLS + ACLs
 
 **Adds:** `security/tls.go` — real self-signed CA + server cert
