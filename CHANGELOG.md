@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.12 — Schema validation
+
+**Adds:** `schema.Registry` — one current schema per partition, JSON
+Schema-like minimal representation (field name → type + required),
+compatibility checked at registration time (not deferred to individual
+writes). `schema.CheckedWrite` validates a document against the
+partition's schema before delegating to `security.CheckedWrite` — an
+invalid document never reaches Raft at all.
+
+**Design doc:** `docs/design_schema_evolution.md` — explains explicitly
+why JSON Schema was chosen over Avro/Protobuf for this version (no binary
+schema-registry/wire-format layer exists in this project, and building
+one correctly is out of scope here — the compatibility *rules* enforced
+are the same either way).
+
+**Tests:** `tests/regression/v0_12_schema_test.go`
+- `TestV12_CompatibleSchemaChangeAccepted` — adding an optional field is
+  accepted; both old- and new-shaped documents validate under the new
+  schema
+- `TestV12_BreakingSchemaChangeRejected` — required-field removal, type
+  narrowing, and a new required-field-with-no-default are each rejected
+  at registration time; the registry's current schema is unchanged after
+  every rejected attempt
+- `TestV12_CheckedWriteRejectsInvalidDocumentBeforeConsensus` — an
+  invalid document is rejected with zero Raft entries committed; a valid
+  one succeeds end-to-end
+
+**Breaking check:** full v0.1–v0.11 regression suite re-ran, still green
+— `go test ./... -race -count=5` clean.
+
+**Not yet implemented:** no Avro/Protobuf binary schema support; one
+schema per partition only, no per-message multi-schema versioning.
+
 ## v0.11 — Observability
 
 **Adds:** `metrics/` Prometheus instrumentation — `ledgerdb_writes_total`
