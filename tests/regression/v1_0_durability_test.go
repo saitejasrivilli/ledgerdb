@@ -41,7 +41,15 @@ func TestV1_0_HundredKillAndRecoverCyclesNoDataLoss(t *testing.T) {
 		net.Disconnect(leader)
 
 		newLeader := -1
-		deadline := time.Now().Add(2 * time.Second)
+		// generous deadline: election timeout is randomized 300-600ms
+		// (raft/raft.go), but under full-suite parallel test load (many
+		// other Raft clusters competing for CPU) a single cycle can take
+		// noticeably longer to resolve — seen directly: 5/5 clean in
+		// isolation, one flake in 100 cycles under full `go test ./...`
+		// contention. This is CPU-scheduling noise, not a correctness
+		// issue, so the fix is a deadline that tolerates real contention
+		// rather than a tighter one that fails under it.
+		deadline := time.Now().Add(6 * time.Second)
 		for newLeader == -1 && time.Now().Before(deadline) {
 			for i, n := range nodes {
 				if i == leader || !net.IsConnected(i) {
@@ -62,7 +70,7 @@ func TestV1_0_HundredKillAndRecoverCyclesNoDataLoss(t *testing.T) {
 
 		// confirm every document written so far is still correct on the
 		// new leader before moving to the next cycle
-		if !nodes[newLeader].WaitApplied(mustLatestIndex(t, nodes[newLeader]), 2*time.Second) {
+		if !nodes[newLeader].WaitApplied(mustLatestIndex(t, nodes[newLeader]), 6*time.Second) {
 			t.Fatalf("cycle %d: new leader never caught up", cycle)
 		}
 		snap := nodes[newLeader].Snapshot()

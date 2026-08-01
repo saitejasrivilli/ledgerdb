@@ -133,12 +133,18 @@ func newTCPTransport(me int, addrs map[int]string, serverTLSConfig, clientTLSCon
 // A real network partition is simulated by calling this on BOTH sides of
 // the cut (this transport blocking peer, and peer's own transport
 // blocking this node back) — this sandbox has no OS-level network
-// namespace/iptables control to sever a real socket path outright, so
-// this is the achievable realization of "inject a partition" here: real
-// TCP connections and real dial/RPC errors for every unblocked pair,
-// with the blocked pair failing the way an actually-unreachable peer
-// would (connection refused/timeout), not a simulated in-memory flag on
-// a fake network like v0.1-v1.0's Network used.
+// namespace/iptables control to sever a real socket path outright.
+//
+// This is NOT verified to behave like a real partition, and that claim
+// should not be assumed: this fails a call immediately, closer to a TCP
+// RST/REJECT, whereas a real `iptables DROP` typically vanishes packets
+// silently and leaves the caller waiting out a full TCP timeout before
+// it learns anything failed — a materially different timing profile,
+// and timing is exactly what the chaos-recovery numbers measure. Real
+// TCP connections and real dial/RPC errors are exercised for every
+// unblocked pair, which is a genuine improvement over v0.1-v1.0's fully
+// simulated Network — but the silent-packet-loss case specifically has
+// not been tested against real iptables/tc netem rules.
 func (t *TCPTransport) BlockPeer(peer int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()

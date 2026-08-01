@@ -97,8 +97,15 @@ majority side commits. What's still not covered: real packet
 loss/reordering under sustained load, and partitioning is done via an
 application-level connection block (`TCPTransport.BlockPeer`) rather than
 OS-level firewall/netns rules, since this sandbox has no control over
-those — a real firewall rule would exercise the same code path
-identically (RPCs fail the same way), but hasn't been tried.
+those. **The claim that this behaves like a real partition is assumed,
+not verified** — an app-level block fails a call immediately (closer to
+a TCP RST/REJECT), while a real `iptables DROP` typically causes packets
+to vanish silently, leaving the sender waiting out a full TCP timeout
+before it even learns the connection failed. Those are different timing
+profiles, and timing is exactly what the chaos-recovery numbers measure.
+The honest answer to "did you test the silent-packet-loss case" is no,
+not yet — this hasn't been checked against real `iptables`/`tc netem`
+rules, which don't need Docker, just a Linux box with netns/root access.
 
 **TLS: also closed, in the same pass as the transport swap.**
 `NewTCPTransportTLS` wires v0.10's real cert/handshake machinery

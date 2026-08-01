@@ -1,0 +1,54 @@
+name: MinIO integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  minio-integration:
+    runs-on: ubuntu-latest
+    services:
+      # bitnami/minio's entrypoint starts the server automatically from
+      # these env vars — unlike the official minio/minio image, it
+      # doesn't need a custom `command:` override, which GitHub Actions'
+      # `services:` block doesn't support anyway.
+      minio:
+        image: bitnami/minio:latest
+        ports:
+          - 9000:9000
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Wait for MinIO to be reachable
+        run: |
+          for i in $(seq 1 20); do
+            if curl -sf http://localhost:9000/minio/health/live; then
+              echo "MinIO is up"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "MinIO never became reachable"
+          exit 1
+
+      - name: Run real MinIO integration test
+        env:
+          MINIO_ENDPOINT: localhost:9000
+          MINIO_ACCESS_KEY: minioadmin
+          MINIO_SECRET_KEY: minioadmin
+        run: go test ./tests/integration/... -v -run TestRealMinIO
