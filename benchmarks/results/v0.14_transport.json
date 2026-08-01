@@ -1,0 +1,26 @@
+{
+  "generated_at": "2026-08-01T18:04:08Z",
+  "transport": "real TCP (net/rpc over net.Listen/net.Dial), kill simulated via bidirectional TCPTransport.BlockPeer",
+  "runs": [
+    {
+      "detection_ms": 372.788,
+      "recovery_ms": 379.367
+    },
+    {
+      "detection_ms": 320.829,
+      "recovery_ms": 325.003
+    },
+    {
+      "detection_ms": 345.28,
+      "recovery_ms": 349.709
+    },
+    {
+      "detection_ms": 344.423,
+      "recovery_ms": 348.319
+    },
+    {
+      "detection_ms": 320.647,
+      "recovery_ms": 328.118
+    }
+  ]
+}

@@ -1,5 +1,62 @@
 # Changelog
 
+## v0.14 — Real network transport
+
+**Adds:** `raft/transport.go` — a `Transport` interface (`SendRequestVote`/
+`SendAppendEntries`) that `startElection`/`sendAppendEntriesTo` now call
+instead of reaching into `*Network` directly. `simTransport` adapts the
+existing in-process `Network` (v0.1) to this interface so every prior
+test keeps passing completely unmodified — this version adds a second
+implementation, it doesn't replace the first. `raft/tcp_transport.go` —
+`TCPTransport`, a real socket-based transport over `net/rpc` + real
+`net.Listen`/`net.Dial`, with `BlockPeer`/`UnblockPeer` for injecting a
+genuine bidirectional network partition (application-level connection
+blocking, since this sandbox has no OS-level netns/firewall control —
+documented honestly as the achievable realization of "inject a
+partition" here, not claimed as OS-level).
+
+**Design doc:** `docs/design_real_transport.md` — states why this version
+exists (the v0.7 chaos numbers were a process-crash measurement over a
+simulated network, not a partition measurement over a real one) and
+corrects a wrong assumption caught while writing the partition test (see
+below).
+
+**Tests:** `tests/regression/v0_14_real_transport_test.go`
+- `TestRealTransportElectsLeaderAndCommits` — leader election and log
+  commit work correctly over real TCP sockets, not just the simulation
+- `TestRealNetworkPartitionOnlyMajoritySideCommits` — a real bidirectional
+  TCP partition (whichever node is leader at partition time, cut off from
+  the other two): the majority side elects and commits; the isolated
+  side never applies the write while cut off; rejoins and catches up
+  cleanly once the partition heals
+
+**Bug caught by running the partition test 20x, not just once:** the
+first version of the partition test asserted the isolated node must stop
+reporting `GetState() == isLeader`, which flaked ~2/10 runs. That
+assertion was simply wrong — a truly isolated Raft leader has no way to
+learn it's cut off, so it correctly keeps believing it's leader
+indefinitely; the actual, provable correctness property is that it can
+never get anything **committed** while isolated. Fixed the test to check
+that instead of a stronger property Raft doesn't (and shouldn't)
+guarantee — the same class of correction documented in
+`docs/design_raft.md`'s addendum from v0.6.
+
+**Re-measured (not re-estimated) chaos numbers:**
+`benchmarks/results/v0.14_transport.json`, 5 runs over the real
+transport — detection ~321–373ms, recovery ~325–379ms, landing in the
+same range as v0.7's simulated 316ms/326ms because election-timeout
+duration dominates both measurements, not transport speed. Reported
+alongside the v0.7 number, not as a replacement for it.
+
+**Breaking check:** full v0.1–v1.0 regression suite re-ran, still green
+— `go test ./... -race -count=5` clean; the new partition test alone run
+20x to confirm the fix held (see bug note above).
+
+**Not yet implemented, stated honestly:** TLS not wired into
+`TCPTransport` (real sockets now exist for it — natural next step, not
+done here); no real packet loss/reordering test under sustained load; no
+cross-host test (loopback TCP only).
+
 ## v1.0 — Document store + MVCC
 
 **Adds:** `docstore/` — a document store built on `raft.Raft` (v0.1) and

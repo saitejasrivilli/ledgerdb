@@ -128,10 +128,7 @@ func (rf *Raft) sendAppendEntriesTo(peer int, term int) {
 	}
 	rf.mu.Unlock()
 
-	reply := &AppendEntriesReply{}
-	ok := rf.net.Call(rf.me, peer, func(target *Raft) bool {
-		return target.AppendEntries(args, reply)
-	})
+	reply, ok := rf.transport.SendAppendEntries(peer, args)
 	if !ok {
 		return
 	}

@@ -39,11 +39,11 @@ type ApplyMsg struct {
 
 // Raft is the per-server consensus state.
 type Raft struct {
-	mu      sync.Mutex
-	net     *Network
-	me      int
-	peers   []int
-	applyCh chan ApplyMsg
+	mu        sync.Mutex
+	transport Transport
+	me        int
+	peers     []int
+	applyCh   chan ApplyMsg
 
 	// persistent state (Figure 2)
 	currentTerm int
@@ -63,9 +63,25 @@ type Raft struct {
 	killed          bool
 }
 
+// Make builds a Raft peer using the in-process simulated Network (v0.1) —
+// every test from v0.1 through v1.0 uses this constructor, unmodified.
 func Make(net *Network, me int, peers []int, applyCh chan ApplyMsg) *Raft {
+	rf := newRaft(&simTransport{net: net, me: me}, me, peers, applyCh)
+	net.AddServer(me, rf)
+	return rf
+}
+
+// MakeWithTransport builds a Raft peer using any Transport — added in
+// v0.14 so a real socket-based transport (TCPTransport) can be used
+// without touching any consensus logic below. See
+// docs/design_real_transport.md.
+func MakeWithTransport(transport Transport, me int, peers []int, applyCh chan ApplyMsg) *Raft {
+	return newRaft(transport, me, peers, applyCh)
+}
+
+func newRaft(transport Transport, me int, peers []int, applyCh chan ApplyMsg) *Raft {
 	rf := &Raft{
-		net:         net,
+		transport:   transport,
 		me:          me,
 		peers:       peers,
 		applyCh:     applyCh,
@@ -76,7 +92,6 @@ func Make(net *Network, me int, peers []int, applyCh chan ApplyMsg) *Raft {
 		lastApplied: 0,
 	}
 	rf.resetElectionTimer()
-	net.AddServer(me, rf)
 	go rf.electionTicker()
 	go rf.applyTicker()
 	return rf
@@ -153,10 +168,7 @@ func (rf *Raft) startElection() {
 				LastLogIndex: lastLogIndex,
 				LastLogTerm:  lastLogTerm,
 			}
-			reply := &RequestVoteReply{}
-			ok := rf.net.Call(rf.me, peer, func(target *Raft) bool {
-				return target.RequestVote(args, reply)
-			})
+			reply, ok := rf.transport.SendRequestVote(peer, args)
 			if !ok {
 				return
 			}
